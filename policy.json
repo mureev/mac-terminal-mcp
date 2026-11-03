@@ -1,0 +1,189 @@
+{
+  "_comment": [
+    "Mac Ops policy, installed read-only next to the server by install.sh (which writes tmux's full path).",
+    "approvals 'tiers' (v0.3): reads run in a read-only macOS sandbox without asking; request_grant opens a grant",
+    "for a task (one dialog, this chat only) under which calls run sandboxed to its folders; always_ask (tier 2)",
+    "asks every time. If the sandbox self-test fails, every call of confirm_tools asks, as in v0.2. README.md.",
+    "deny_* are a speed bump for honest mistakes and obvious injections, not a sandbox.",
+    "protected_folders: folders no grant may cover (writes there always ask), e.g. a repo of approved playbooks."
+  ],
+  "shell": [
+    "/bin/zsh",
+    "-l",
+    "-c"
+  ],
+  "session_shell": [
+    "/bin/zsh",
+    "-l"
+  ],
+  "tmux": "tmux",
+  "tmux_socket": "claude",
+  "default_cwd": "~",
+  "run_timeout_max_s": 45,
+  "output_max_chars": 30000,
+  "deny_words": [
+    "sudo",
+    "su",
+    "doas",
+    "ssh",
+    "scp",
+    "sftp",
+    "ansible",
+    "ansible-playbook",
+    "ansible-inventory"
+  ],
+  "deny_patterns": [
+    "find-generic-password",
+    "find-internet-password",
+    "dump-keychain",
+    "\\bsecurity\\s+export\\b"
+  ],
+  "deny_paths": [
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.kube",
+    "~/.docker/config.json",
+    "~/.netrc",
+    "~/Library/Keychains",
+    "~/Library/Application Support/Claude",
+    "~/.config/claude-mcp",
+    "~/.local/state/mac-ops",
+    "~/.git-credentials",
+    "~/.pypirc",
+    "~/.vault-token",
+    "~/.pgpass",
+    "~/.my.cnf"
+  ],
+  "protected_folders": [],
+  "state_dir": "~/.local/state/mac-ops",
+  "confirm_tools": [
+    "run",
+    "session_start",
+    "session_send",
+    "write_file",
+    "open"
+  ],
+  "approvals": "tiers",
+  "confirm_timeout_s": 40,
+  "confirm_with": "osascript",
+  "sandbox_exec": "/usr/bin/sandbox-exec",
+  "sandbox_selftest": true,
+  "grant_minutes": 60,
+  "grant_max_minutes": 240,
+  "grant_max_calls": 1000,
+  "grant_max_folders": 5,
+  "grant_extra_write": [
+    "~/Library/Caches",
+    "~/.cache",
+    "~/.npm"
+  ],
+  "always_ask": [
+    [
+      "push or rewrite git history",
+      "\\bgit\\b[^\\n;&|]*\\s(push|send-email|filter-branch|filter-repo)\\b"
+    ],
+    [
+      "throw away uncommitted git work",
+      "\\bgit\\b[^\\n;&|]*\\s(reset\\s[^\\n;&|]*--hard|clean\\s[^\\n;&|]*-[a-zA-Z]*f)"
+    ],
+    [
+      "change something on GitHub",
+      "\\bgh\\s+(api|auth|secret|variable|ssh-key|gpg-key|pr\\s+(create|merge|close|reopen|edit|comment|review|ready)|issue\\s+(create|close|reopen|edit|comment|delete|transfer)|release\\s+(create|upload|delete|edit)|repo\\s+(create|delete|edit|fork|rename|archive|sync)|workflow\\s+(run|enable|disable)|run\\s+(rerun|cancel|delete)|gist\\s+(create|edit|delete))\\b"
+    ],
+    [
+      "use a cloud or cluster CLI",
+      "(^|[\\s;&|(/])(aws|gcloud|gsutil|bq|az|kubectl|helm|terraform|tofu|pulumi|eksctl|doctl|flyctl|vercel|netlify|heroku)(\\s|$)"
+    ],
+    [
+      "use Docker or another container tool",
+      "(^|[\\s;&|(/])(docker|podman|nerdctl|colima)(\\s|$)"
+    ],
+    [
+      "send data off the Mac",
+      "\\b(curl|wget|xh|http|https)\\b[^\\n;|]*\\s(-d|--data[\\w-]*|-F|--form[\\w-]*|-T|--upload-file|--json|--post-data|--post-file|-X\\s*(POST|PUT|PATCH|DELETE)|--request[=\\s]*(POST|PUT|PATCH|DELETE)|--method[=\\s]*(POST|PUT|PATCH|DELETE))(\\s|=|$)"
+    ],
+    [
+      "publish a package",
+      "\\b(npm|pnpm|yarn|bun)\\s+(publish|unpublish|deprecate|owner|token|login|adduser)\\b|\\b(twine\\s+upload|cargo\\s+publish|gem\\s+push|poetry\\s+publish|uv\\s+publish)\\b"
+    ],
+    [
+      "change launchd or cron (runs later)",
+      "\\blaunchctl\\s+(load|unload|bootstrap|bootout|enable|disable|kickstart|kill|remove|submit|setenv|unsetenv|config|asuser)\\b|\\bcrontab\\b"
+    ],
+    [
+      "change system settings, security or credentials",
+      "\\bdefaults\\s+(-currentHost\\s+)?(write|delete|import|rename)\\b|\\bnetworksetup\\s+-set|\\bscutil\\s+--set|\\bpmset\\s+(?!-g)"
+    ],
+    [
+      "control apps (AppleScript, Shortcuts, open)",
+      "(^|[;&|(\\n]\\s*)(/usr/bin/)?open\\s"
+    ],
+    [
+      "copy files to another machine",
+      "\\brsync\\b[^\\n;&|]*\\s\\S+:|\\b(rclone|s3cmd)\\b"
+    ]
+  ],
+  "always_ask_programs": [
+    [
+      "change system settings, security or credentials",
+      [
+        "security",
+        "tccutil",
+        "csrutil",
+        "spctl",
+        "systemsetup",
+        "nvram",
+        "fdesetup",
+        "profiles",
+        "dscl",
+        "sysadminctl",
+        "kmutil",
+        "kextload"
+      ]
+    ],
+    [
+      "control apps (AppleScript, Shortcuts, open)",
+      [
+        "osascript",
+        "shortcuts",
+        "automator"
+      ]
+    ],
+    [
+      "quit or kill other apps",
+      [
+        "killall",
+        "pkill"
+      ]
+    ]
+  ],
+  "allow_repeat_minutes": 5,
+  "grant_hint": true,
+  "always_ask_paths": [
+    "~/.zshrc",
+    "~/.zprofile",
+    "~/.zshenv",
+    "~/.zlogin",
+    "~/.zlogout",
+    "~/.bashrc",
+    "~/.bash_profile",
+    "~/.profile",
+    "~/.gitconfig",
+    "~/.config/git",
+    "~/Library/LaunchAgents",
+    "/Library/LaunchAgents",
+    "/Library/LaunchDaemons"
+  ],
+  "protected_writes": [
+    "/[.]git/hooks(/|$)",
+    "/[.]git/config$",
+    "/[.]git$",
+    "/[.]envrc$",
+    "/[.]gitmodules$",
+    "/[.]vscode(/|$)",
+    "/[.]idea(/|$)",
+    "/[.]mcp[.]json$",
+    "/[.]claude/(commands|agents)(/|$)"
+  ]
+}
