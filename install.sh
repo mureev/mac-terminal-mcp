@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs Mac Ops ("mac-ops") in the Claude desktop app: Claude's shell, sessions and files on this Mac. It reaches no
-# remote host (ssh, scp, ansible are denied). Approvals are tiered (v0.3): reads run in a
-# read-only macOS sandbox without asking, one dialog opens a grant for a task, and pushes and the like always ask.
+# remote host (ssh, scp, ansible are denied). No dialogs (v0.7): every shell command runs in the fence, a macOS
+# sandbox that protects credentials and the files that run later; outside_sandbox (with a why) is the logged exception.
 #
 #   bash install.sh                install, or update to what this folder holds now (review `git diff` first)
 #   bash install.sh --check        change nothing: installed copy vs this folder, the Claude entry, tmux,
@@ -20,7 +20,8 @@
 #   2. Runs the tests (tmux sessions on a test socket, temporary folders; nothing outside them is touched).
 #   3. Quits Claude while its config is edited, so the app can't write an older copy back. Reopens it at the end.
 #   4. Installs the read-only copy (policy.json gets tmux's full path), checks it answers the MCP handshake, and
-#      runs the sandbox self-test (if it fails, the server asks for every call, as in v0.2; nothing else changes).
+#      runs the sandbox self-test (if it fails, shell commands are refused, or run unsandboxed if the policy's
+#      sandbox_fail says so; the file tools keep working).
 #   5. Backs up claude_desktop_config.json to ~/.config/claude-mcp/backups/, then adds or replaces ONLY the mac-ops
 #      entry. Every other entry is kept; the result is parsed back before it replaces the file.
 set -euo pipefail
@@ -48,6 +49,11 @@ for a in "$@"; do
     *) die "Unknown argument '$a'. Use --check, --remove, --skip-tests, or nothing to install." ;;
   esac
 done
+# A change to Mac Ops goes live only when a person installs it: not from a command Mac Ops runs (it sets MAC_OPS=1).
+# A speed bump like the deny lists (outside_sandbox is a shell as you), and it says so.
+if [ -n "${MAC_OPS:-}" ] && [ "$MODE" != check ]; then
+  die "install.sh runs from your own Terminal, not through Mac Ops (MAC_OPS is set). --check is fine from anywhere."
+fi
 
 [ -x "$PY" ] || die "No $PY. Install the Xcode command line tools (xcode-select --install)."
 "$PY" -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
@@ -122,7 +128,7 @@ if [ "$MODE" = check ]; then
   ok "Python: $PY ($("$PY" -I -c 'import platform; print(platform.python_version())'))"
   [ -n "$TMUX_BIN" ] && ok "tmux: $TMUX_BIN ($("$TMUX_BIN" -V))" || warn "No tmux: sessions need it (brew install tmux)"
   ok "policy: $POLICY_SRC"
-  ok "protected folders (never a grant folder): $PROTECTED"
+  ok "protected folders (never writable in the fence): $PROTECTED"
   say "Installed copy ($INST)"
   if [ ! -d "$INST" ]; then
     warn "Not installed yet: run this script without --check"
@@ -214,10 +220,13 @@ printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '
   | "$PY" -I -c 'import json,sys; r=[json.loads(x) for x in sys.stdin]; assert r[0]["result"]["serverInfo"]["name"]=="mac-ops"; print(len(r[1]["result"]["tools"]))' \
   > "$INST/.handshake" 2>&1 || die "The installed server did not answer the MCP handshake."
 ok "Installed; the server answers with $(cat "$INST/.handshake") tools"; rm -f "$INST/.handshake"
+SANDBOX_FAIL="$("$PY" -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("sandbox_fail", "refuse"))' "$INST/policy.json")"
 if ST="$(MAC_OPS_POLICY="$INST/policy.json" "$PY" -I -B "$INST/mac_ops_server.py" --selftest 2>&1)"; then
-  ok "Approvals: tiers. $ST"
+  ok "The fence (macOS sandbox) works here. $ST"
+elif [ "$SANDBOX_FAIL" = unsandboxed ]; then
+  warn "The sandbox self-test failed: $ST. Shell commands will run UNSANDBOXED (policy sandbox_fail: unsandboxed)."
 else
-  warn "Approvals: every call asks (v0.2), because the sandbox self-test failed: $ST"
+  warn "The sandbox self-test failed: $ST. Shell commands will be refused until it passes (policy sandbox_fail: refuse); the file tools work. Claude can show why with status."
 fi
 
 say "Adding the server to the Claude desktop config"
@@ -225,9 +234,10 @@ backup_cfg
 edit_cfg set
 
 say "Done"
-echo "  Reads run in a read-only sandbox without asking. A task asks once (request_grant: folders, minutes, network);"
-echo "  pushes, cloud CLIs, uploads, launchd, settings, and install.sh always ask. Claude can show the"
-echo "  state with approval_status."
+echo "  No dialogs. Shell commands run in the fence (a macOS sandbox): they can't read ~/.ssh, ~/.aws or the Keychain,"
+echo "  can't write outside your home folder, and can't change shell rc files, LaunchAgents, .git hooks or Claude's"
+echo "  config. What the fence blocks, Claude can rerun with outside_sandbox and a why: logged, never silent."
+echo "  Claude can show the state with status."
 echo "  Watch Claude's sessions: tmux -L claude ls    then    tmux -L claude attach -t <name>   (detach: Ctrl-b d)"
 echo "  Audit log: $STATE/audit.jsonl"
 [ "${REOPEN:-0}" = 1 ] || echo "  Restart Claude (Cmd+Q, then open it) to load the server."

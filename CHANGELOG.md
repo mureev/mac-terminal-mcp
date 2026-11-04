@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 — 2026-11-04 — no dialogs
+
+The approval system is gone; the macOS sandbox carries the weight (design-decisions: "No dialogs").
+
+- **No dialogs, tiers or grants.** Removed: the macOS alerts, `request_grant`/`revoke_grant` and grant tokens, the
+  read-only classifier (tier 0), the always-ask lists (tier 2), the allow-repeat window, grant hints, approvals
+  `every`, `--preview-dialogs`. `approval_status` is now `status`.
+- **The fence:** one Seatbelt profile for every `run`, `session_start` and fenced session. Reads everywhere but
+  `deny_paths`; writes only under `fence_writable` (new; default the home folder) and temp, never to `deny_paths`, the
+  state folder, `protected_paths`, `protected_folders`, the tmux program, or a `protected_writes` match; network per
+  `network` (new; default on); the exec guard and the extra guards as before.
+- **`outside_sandbox=true`** on `run` and `session_start`: no sandbox, with a required `why`; the deny lists still
+  apply; logged with the why; `allow_outside_sandbox` (new; default true) turns it off.
+- **write_file and edit_file** refuse what the fence protects, in the server's own Python, and otherwise write without
+  asking. `open` no longer asks (logged).
+- **Self-test** rebuilt for the fence, with scratch stand-ins for the policy's folders. If it fails: `sandbox_fail`
+  (new): `refuse` (default) or `unsandboxed`. A test proves a sandbox that sandboxes nothing fails it.
+- **Policy:** `always_ask_paths` is now `protected_paths` (a 0.6 policy's list is read as it), with `~/Applications`,
+  `~/.local/bin` and `~/bin` added; `protected_writes` adds Claude Code's `.claude/settings*.json`, `skills`, `hooks`,
+  `plugins` and `~/.claude.json`. 0.6's dialog and grant keys are ignored and listed by `status`, and a 0.6 policy's
+  protected lists gain 0.7's additions.
+- **Audit log:** each call's end records `how`: `fenced`, `unsandboxed` (with its why) or `python`.
+- `install.sh` refuses to install from a command Mac Ops runs (`MAC_OPS` set; `--check` still works).
+- `tests/fence_probe.py` replaces the 0.3.2 sandbox-runtime experiment (it compared read and grant profiles that no
+  longer exist; it and `srt-0.0.81-profiles.json` are in the 0.6.0 history). `tests/policy-0.6.0.json`: the 0.6 policy,
+  to test that it still loads.
+- License: MIT.
+
 ## 0.6.0 — 2026-11-03 — standalone
 
 Mac Ops leaves the private workspace it grew up in and becomes its own project.

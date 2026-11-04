@@ -28,7 +28,7 @@ command it misjudges still can't write.
 
 **Borrow, don't adopt (v0.3.2).** A second look at Desktop Commander and Anthropic's sandbox-runtime: keep Mac Ops,
 take Desktop Commander's targeted edit and sandbox-runtime's protected-file list, and test our profiles against
-sandbox-runtime's (`tests/sandbox_runtime_experiment.py`).
+sandbox-runtime's (`tests/sandbox_runtime_experiment.py`, in the history up to 0.6.0).
 
 **No remote hosts (v0.4.0).** Code that can change production shouldn't live in a Mac shell that changes often.
 Remote work moved to a separate server with its own gates; this one denies `ssh`, `scp` and `ansible`.
@@ -43,3 +43,18 @@ fixed narrowly, with a test. A wider "allow everything for a while" button was t
 **Changes to the approval code are reviewed by a person.** An auto-mode safety check once stopped Claude from
 applying a change to this server's own approval code. That is the right outcome: such changes are handed over as a
 patch, tested, and applied by a person.
+
+**No dialogs (v0.7, 2026-11-04).** A week of daily use with tiers and grants: every dialog was approved, and the
+only requests were for fewer of them, five times; even a second dialog in a session was too many. An approval that is
+always given is a ritual, not a control, and worse than none: it habituates, so the one bad request gets the same
+click as the two hundred good ones. Structural controls don't habituate. So the sandbox, which was already what held
+under a grant, now holds for every shell call, with no question asked: one profile, the fence, that lets commands
+change your work but not your credentials, your installed software, or anything that runs later outside it. What it
+blocks and you plainly want goes through `outside_sandbox` with a stated why, logged and visible to the client's own
+permission layer, instead of through a dialog. Claude Code's sandbox reached the same design (auto-allow: sandboxed
+commands run without prompts; the rest falls back to the permission flow). Two choices beyond "the grant profile
+without the grant": writes are limited to the home folder and temp, because once writes are free, a writable
+Homebrew or `/Applications` lets a fenced command replace a program that something unsandboxed runs later (this
+server's own tmux among them); and Claude Code's settings, hooks and plugins joined the protected files for the same
+reason. Gates stay where they are rare and high-stakes: production changes live in a separate tool, whose few
+approvals still mean something.

@@ -1,19 +1,27 @@
 # Mac Ops
 
-**Claude's hands on your Mac, with a leash you can actually see.**
+**Claude's hands on your Mac, fenced by the macOS kernel instead of a dialog.**
 
-Mac Ops is a local [MCP](https://modelcontextprotocol.io) server for the Claude desktop app (Cowork and chat). It lets
-Claude run shell commands, keep long jobs going in tmux sessions, read and edit files, and keep the Mac awake — while
-you click *Allow* a handful of times per working session instead of once per command.
+Mac Ops is a local [MCP](https://modelcontextprotocol.io) server that gives Claude a shell on your Mac: run commands,
+keep long jobs going in tmux sessions, read and edit files, keep the Mac awake. It speaks plain stdio MCP, so any
+MCP client can use it; the installer sets it up for the Claude desktop app (chat and Cowork).
 
-The trick is tiers. Commands that provably only read run in a read-only, offline macOS sandbox (Seatbelt, the same
-mechanism Claude Code uses) and never ask. Everything else either asks once, or runs under a *grant*: one dialog
-opens a time-boxed, folder-scoped, optionally-networked sandbox for a task, and calls carrying its token go through
-quietly. A short list of things that are dangerous no matter what — `git push`, cloud CLIs, uploads, `osascript`,
-writes to `.git/hooks` or your shell rc files — always asks, grant or not. Every call lands in an audit log before it
-runs.
+There are no approval dialogs. Every shell command runs at once, inside one macOS sandbox profile, *the fence*
+(Seatbelt, the mechanism Claude Code's own sandbox uses on macOS). The fence lets Claude do ordinary work — read the
+Mac, change files in your home folder, build, test, use the network — and stops what matters most when a model is
+wrong or misled: reading `~/.ssh`, `~/.aws` or the Keychain, writing outside your home folder, and changing the
+files that run later outside the sandbox (shell startup files,
+LaunchAgents, git hooks and config, editor tasks, MCP and Claude Code config). When the fence blocks something you
+plainly asked for — a `git push` that needs the Keychain, a `brew install`, an `osascript` — Claude reruns it with
+`outside_sandbox=true` and a one-line why. That is logged and visible, never silent.
+
+> Desktop Commander guards with a pattern list; Mac Ops uses the macOS kernel sandbox.
+> No dialogs, no dependencies, no telemetry.
 
 It is one Python file, standard library only, run by the system Python. No npm, no pip, no telemetry, no self-update.
+
+If the Claude desktop app ships a native macOS shell with a sandbox, use that instead: this project will then be
+archived.
 
 ## Why this exists
 
@@ -25,14 +33,17 @@ reasonable trade for a general tool; together they are a bad trade for a laptop 
 So: a smaller thing, where the guard that matters is the kernel's sandbox rather than a regex, and the regexes are
 labelled as the speed bumps they are.
 
-Design history: [docs/design-decisions.md](docs/design-decisions.md). Versions: [CHANGELOG.md](CHANGELOG.md).
+Versions 0.2–0.6 put a dialog in front of risky calls, then tiers and time-boxed grants to make the dialogs fewer. A
+week of real use answered the question: every dialog was approved, and the requests were all for fewer of them. An
+approval you always give is not a control. 0.7 removes them and lets the sandbox carry the weight
+([docs/design-decisions.md](docs/design-decisions.md)). Versions: [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
-- macOS (tested on recent releases; the sandbox self-test decides at every start whether tiers work on yours)
+- macOS (tested on recent releases; a self-test at every start decides whether the fence works on yours)
 - `/usr/bin/python3` 3.9+ (Xcode command line tools: `xcode-select --install`)
 - tmux (`brew install tmux`)
-- The Claude desktop app
+- The Claude desktop app, for the installer (any stdio MCP client can run the server)
 
 ## Install, update, remove
 
@@ -42,41 +53,40 @@ bash install.sh --check                 # what is there now (changes nothing)
 bash install.sh                         # runs the tests, quits Claude, installs, reopens Claude
 ```
 
-**To update:** review `git diff`, commit, then run `bash install.sh` again. Nothing updates by itself.
-
-**To remove:** `bash install.sh --remove`. It takes out the entry and the installed copy, and keeps the audit log.
+Run it from your own Terminal: it refuses to install from a command Mac Ops runs (a change to Mac Ops goes live only
+when a person installs it). **To update:** review `git diff`, commit, then run `bash install.sh` again. Nothing updates
+by itself. **To remove:** `bash install.sh --remove`. It takes out the entry and the installed copy, and keeps the
+audit log.
 
 After installing, grant **tmux** access to your Documents folder once if Claude should work there (System Settings →
-Privacy & Security → Files & Folders → tmux): reads and commands that touch protected folders run through tmux, so
+Privacy & Security → Files & Folders → tmux): commands and reads that touch protected folders run through tmux, so
 the server's own Python never needs Full Disk Access.
 
 ## Files
 
 | File | What |
 |---|---|
-| `mac_ops_server.py` | The server: MCP over stdio, the tools, the policy, the sandbox profiles, the audit log. |
-| `policy.json` | What it may do: shells, tmux, deny lists, protected folders, tier-2 rules, where state goes. Installed read-only. |
+| `mac_ops_server.py` | The server: MCP over stdio, the tools, the policy, the fence and its self-test, the audit log. |
+| `policy.json` | What it may do: shells, tmux, deny lists, protected paths and folders, network, where state goes. Installed read-only. |
 | `install.sh` | Installs the read-only copy and the `mac-ops` entry in Claude desktop; `--check` changes nothing; `--remove`. |
 | `tests/test_mac_ops.py` | The suite (stdlib `unittest`; needs tmux and git): `python3 -B -m unittest discover -s tests -v`. On a Mac it also tests the real sandbox; elsewhere those tests skip. |
-| `tests/seatbelt_spike.sh` | A by-hand probe of what the sandbox blocks on this Mac (writes, network, Apple Events, clipboard, signals). |
-| `tests/sandbox_runtime_experiment.py` | By hand: our self-test and probes under our profiles and under Anthropic sandbox-runtime 0.0.81's (`tests/srt-0.0.81-profiles.json`, generated once from the npm package; srt never runs on the Mac). |
+| `tests/fence_probe.py` | By hand, on a Mac: probe by probe, what the fence blocks and allows there (DNS, mach services, a copy of `open`, signals...). |
+| `tests/seatbelt_spike.sh` | A by-hand probe of what Seatbelt itself blocks on this Mac (from 0.3). |
 | `docs/` | The Desktop Commander audit and the design decisions. |
 
 ## Tools
 
 | Tool | Does |
 |---|---|
-| `run` | One shell command (zsh login shell, as you, no stdin, up to 45 s). Output and exit code. Reads run sandboxed without asking; `grant` for the rest. |
-| `session_start` | A tmux session. With `command`, a job: it runs once, prints `[mac-ops: exit N]`, and leaves a shell open. Without, an interactive shell. |
-| `session_send` | Type into a session (and/or press `C-c`, `Enter`, ...), then wait for output (`wait_s`, `until` regex). |
+| `run` | One shell command (zsh login shell, as you, no stdin, up to 45 s), in the fence. Output and exit code. `outside_sandbox=true` + `why`: no sandbox. |
+| `session_start` | A tmux session, in the fence (or `outside_sandbox`). With `command`, a job: it runs once, prints `[mac-ops: exit N]`, and leaves a shell open. Without, an interactive shell. |
+| `session_send` | Type into a session (and/or press `C-c`, `Enter`, ...), then wait for output (`wait_s`, `until` regex). It runs in the sandbox the session started with. |
 | `session_read`, `session_list`, `session_stop` | Read the last lines (optionally wait for new ones), list sessions, kill one. |
-| `read_file`, `write_file` | Text files; `read_file` also .docx/.xlsx/.pptx (stdlib, no DTDs, size limits) and .pdf (macOS PDFKit, built once, run in the read-only sandbox). `write_file` creates (default; refuses an existing file), overwrites atomically, or appends. |
-| `edit_file` | Replace an exact `old_string` (unique unless `replace_all`) with `new_string`, atomically, keeping permissions and Windows line ends. If it isn't there, says where the closest text is and how it differs (`{-sent-}{+file+}`), and changes nothing: a near match is never applied. Asks like `write_file`; won't write over a change made while its dialog was up. |
-| `open`, `notify` | `open` a file, folder, http(s) URL or app (files and web addresses ask: `open` runs outside the sandbox); show a notification. |
-| `request_grant` | One dialog: purpose, folders, minutes, network. Returns a token for this chat; calls carrying it run without asking, sandboxed to those folders. |
-| (dialogs) | A call without a grant shows Don’t Allow / Allow Once (for a series of calls, `request_grant` first). `why` (on run, session_*, write_file, edit_file) heads the dialog. `python3 mac_ops_server.py --preview-dialogs` shows them all. |
-| `revoke_grant`, `approval_status` | End a grant; show tiers vs every-call, the sandbox self-test, active grants (no tokens), dialogs per day. |
+| `read_file`, `write_file` | Text files; `read_file` also .docx/.xlsx/.pptx (stdlib, no DTDs, size limits) and .pdf (macOS PDFKit, built once, run in the fence, offline). `write_file` creates (default; refuses an existing file), overwrites atomically, or appends; it refuses the files the fence protects. |
+| `edit_file` | Replace an exact `old_string` (unique unless `replace_all`) with `new_string`, atomically, keeping permissions and Windows line ends. If it isn't there, says where the closest text is and how it differs (`{-sent-}{+file+}`), and changes nothing: a near match is never applied. Refuses what `write_file` refuses; won't write over a change made since it read the file. |
+| `open`, `notify` | `open` a file, folder, http(s) URL or app (it runs outside the sandbox: logged); show a notification. |
 | `keep_awake` | `caffeinate -dims` until Claude desktop quits (or for `hours`); `off`; `status`. |
+| `status` | Whether the fence works here (the self-test), what it protects, the policy in force, sessions, and calls per day: fenced, unsandboxed, refused. |
 
 Sessions live on their own tmux socket, separate from your own tmux. They keep running between calls and across
 Claude restarts, and several can run at once. Watch or take over any of them:
@@ -88,141 +98,125 @@ tmux -L claude attach -t <name>      # detach again with Ctrl-b d
 
 ## Safety model
 
-**What it is not:** a sandbox for approved calls. "Allow Once" and tier 2 run a shell as you.
-Anything you can do in Terminal, such a call can do, including reading the Keychain items your installers created
-(`security` is on "Always Allow" for them).
+**The fence** is a Seatbelt profile run through `/usr/bin/sandbox-exec` for every `run`, `session_start` and
+everything typed into a fenced session. It is `(allow default)` and then:
 
-**What keeps it safe, in order of strength:**
+| | Allowed | Refused |
+|---|---|---|
+| Read | the whole Mac | `deny_paths`: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, Keychains, `~/.netrc`, `~/.git-credentials`, Claude's config, this server's config and state (any letter case) |
+| Write | `fence_writable` (default: your home folder) and temp | everything else (Homebrew, `/usr/local`, `/Applications`, `/Users/Shared`...); and anywhere: `deny_paths`, `protected_paths` (shell rc files, `~/.gitconfig`, `~/.config/git`, LaunchAgents/Daemons, `~/Applications`, `~/.local/bin`, `~/bin`), `protected_folders`, the tmux program, and `protected_writes` matches: a `.git` folder itself, `.git/hooks`, `.git/config`, `.gitmodules`, `.envrc`, `.vscode/`, `.idea/`, `.mcp.json`, Claude Code's `.claude/settings*.json`, `commands`, `agents`, `skills`, `hooks`, `plugins`, and `~/.claude.json` |
+| Network | on (policy `network`) | off when `network: false` (a DNS lookup still gets through) |
+| Programs | everything else | `open`, `osascript`, `automator`, `shortcuts`, `security`, `tccutil`, `screencapture`, `pbcopy`/`pbpaste`, `launchctl`, `defaults` can't start |
+| Extra guards (each kept only if this Mac accepts it and a shell still works) | | the Keychain daemons (so git and gh over https lose their tokens), the clipboard, Apple Events, LaunchServices' `lsopen`, signals to processes outside the sandbox |
 
-1. **Approvals in three tiers** (policy `approvals: tiers`, the gated tools in `confirm_tools`):
+The rule behind the list: a fenced command may change your work, but not your credentials, not your installed
+software, and not anything that runs later *outside* the fence (which would turn one sandboxed command into an
+unsandboxed one next time). `write_file` and `edit_file` run in the server's own Python, outside the sandbox, so they
+refuse the same list in code.
 
-   | Tier | What | Asks? | Runs |
-   |---|---|---|---|
-   | 0 | `run`/`session_start` commands an allowlist proves read-only (ls, cat, grep, rg, find, git status/log/diff/show, ps, du...; pipes of them) | no | read-only sandbox, no network |
-   | 1 | everything else on the Mac | once per task: `request_grant`, or "Allow N min" in a call's dialog | the grant's sandbox: writes only in its folders, temp and build caches; network only if granted |
-   | 2 | `always_ask` and `always_ask_programs` in policy.json: git push and history rewrites, gh changes, cloud and cluster CLIs, docker, uploads, publishing, launchctl/crontab, defaults write/security/system settings, osascript, killall/pkill (when they are what runs), Mac Ops' own install.sh, rsync to a host; writes to rc files, LaunchAgents, `.git` itself, `.git/hooks`, `.git/config`, `.gitmodules`, `.envrc`, `.vscode/`, `.idea/`, `.mcp.json`, `.claude/commands`/`agents` (any letter case); `open` of a file or web address | every time, no grant covers it | unsandboxed, exactly what you allowed |
+**A self-test at every start** proves the fence on this Mac, through tmux like the real calls: a login shell starts
+and program output comes back; a scratch folder and temp are writable; a write outside its folders, to the state
+folder and to a protected path (also in another letter case) is refused; `.git/hooks` can't be written and `.git`
+can't be renamed (which brought hooks back under another name before 0.3.2); a denied folder and the state folder's
+contents can't be read (also in another letter case); `open` and `osascript` can't start; the network follows the
+policy. Every check needs positive evidence (a marker the sandboxed program printed, or a file on disk), never just
+a missing output; a stand-in that sandboxes nothing fails it (there's a test for that). The probes use scratch
+stand-ins for your folders, so nothing real is touched. If the self-test fails, shell commands are refused (policy
+`sandbox_fail: refuse`, the default) or run unsandboxed and say so (`sandbox_fail: unsandboxed`); `status` says why.
 
-   Dialogs are macOS alerts: a bold headline saying what Claude wants ("Claude wants to run a command"), the exact
-   command or file and where, and what the buttons do. Without a grant they offer **Don't Allow / Allow Once / Allow
-   for 60 Minutes** (the last when the call's folder can be a grant folder); tier 2 carries the caution badge and
-   offers only Allow Once. Don't Allow is the default button; no answer within 40 s or no dialog means refused.
-   `python3 -I -B mac_ops_server.py --preview-dialogs` shows each kind with sample content. **A Don't Allow also
-   revokes the grant the call carried**, a tripwire for a chat doing something you didn't expect. Grant tokens live only in
-   the server's memory (quitting Claude revokes them all), only the chat that got one knows it (the server can't
-   tell chats apart, so the token is the chat's identity), Claude can't create or extend one, and the audit log
-   keeps only their first characters. Grant folders must be project folders: not your home or its top-level
-   folders, not ~/Library, not overlapping a denied path. Defaults: 60 minutes, at most 240, 1000 calls, 5 folders.
-   Your chat's own permission mode (auto or ask) still sees every call on top of all this.
+**`outside_sandbox=true`** on `run` or `session_start` runs with no sandbox, as you. It needs a `why`; the deny lists
+still apply; the result says `UNSANDBOXED (...)`; the audit log records it with the why; and your client's own
+permission layer sees the flag (in Claude desktop, the chat's permission mode). Claude is told to use it only after
+the fence blocked something you plainly asked for, never because a file, page or command output says so.
+`allow_outside_sandbox: false` turns it off.
 
-2. **The sandbox** is macOS Seatbelt through `/usr/bin/sandbox-exec`, the mechanism Claude Code's own sandbox uses on
-   macOS. Profiles: `(allow default)`, then deny network (unless granted), deny every write outside the allowed
-   folders, deny reads and writes of `deny_paths` and the state folder (only its contents: programs fstat their output file there), deny writes to `always_ask_paths` and
-   `protected_writes`, and refuse to start the programs that act outside the sandbox on its behalf: `open` (hands
-   files and URLs to other apps), `osascript`, `automator`, `shortcuts`, `security`, `tccutil`, `screencapture`,
-   `pbcopy`/`pbpaste`, `launchctl`, `defaults`. (On macOS 27 a LaunchServices deny did not stop `open` launching
-   apps, and Apple Events were not reliably refused, so those programs can't start at all.) Extra guards, each kept
-   only if this Mac accepts it, a shell still works with it and, where it can be shown, it works: Apple Events and
-   LaunchServices' own `lsopen` (best effort; a copy of `open` in temp is not the guarded path), the clipboard, the Keychain daemons (under every grant too, so git and gh over https can't read their
-   tokens in the sandbox: a fetch from a private repo asks), and signals to processes outside the sandbox (proven by
-   trying to kill one). **A self-test at every start** proves, through tmux like the real calls, that writes outside
-   temp, reads of denied folders (also spelled in another letter case) and the network are blocked, that a grant
-   writes only its folder, not `.git/hooks`, and can't rename `.git` (which brought hooks back under another name
-   before v0.3.2), that `open` and `osascript` can't start, and that a login shell works and program output comes back.
-   Each check needs positive evidence (a marker the sandboxed program printed, or a file on disk), never just a
-   missing output. Every run uses its own scratch paths (two servers start together when two chats do), and a failed
-   self-test is retried once. If it still fails, approvals fall back to every call asking (v0.2) and `approval_status` says
-   why. The allowlist decides what may skip the dialog; the sandbox is what stops a write or a connection, so a
-   command the allowlist misjudges still can't write.
+**The installed copy is read-only.** Claude desktop runs `~/.config/claude-mcp/mac-ops/`, not this folder, so a
+session that edits this folder changes nothing until a person runs `install.sh` again. The fence can't write the
+installed copy or Claude's config, and no tool can change the policy.
 
-3. **The installed copy is read-only.** Claude desktop runs `~/.config/claude-mcp/mac-ops/`, not this folder, so a
-   session that edits this folder changes nothing until `install.sh` runs again (tier 2: it always asks). No tool
-   can change the policy.
+**No remote hosts.** This server denies `ssh`, `scp`, `sftp` and `ansible`, with `outside_sandbox` too. Reaching
+other machines, and changing production, belongs in a separate tool with its own gates (those gates are rare enough
+to stay meaningful). `protected_folders` (say, a repository of approved playbooks) are never writable here.
 
-4. **No remote hosts.** This server denies `ssh`, `scp`, `sftp` and `ansible`. Reaching other machines belongs in a
-   separate tool with its own gates. Folders listed in `protected_folders` (say, a repository of approved playbooks,
-   or one another, stricter tool owns) are never a grant folder, so every write there asks.
+**The audit log**, `~/.local/state/mac-ops/audit.jsonl` (0600). Every call is logged before it runs (tool,
+arguments with secret-looking values masked, `write_file` content as length and hash) and again when it ends
+(ok, refused or error, duration, and how it ran: `fenced`, `unsandboxed` with its why, or `python` for the file
+tools). The self-test is logged too. If the log can't be written, nothing runs. `status` counts calls per day.
 
-5. **The audit log**, `~/.local/state/mac-ops/audit.jsonl` (0600). Every call is logged before it runs (tool,
-   arguments with secret-looking values masked, `write_file` content as length and hash, grant tokens cut) and again
-   when it ends (ok, refused or error, duration, tier, and how it ran: read, grant or unsandboxed). Dialogs, grants,
-   revocations and the self-test are logged too. If the log can't be written, nothing runs. `approval_status`
-   counts dialogs per day, to check the 5–10 target against numbers.
-
-6. **The deny lists** in `policy.json`: `sudo`/`su`, `ssh`/`scp`/`sftp`/`ansible`, Keychain
-   reads, and secret folders (`~/.ssh`, `~/.aws`, Keychains, Claude's config, this server's own config and
-   state). This is a **speed bump**: it stops honest mistakes and obvious injections. The sandbox makes the folders
-   real for sandboxed calls (a glob that gets past the text match still can't read them).
+**The deny lists** in `policy.json`: `sudo`/`su`, `ssh`/`scp`/`sftp`/`ansible`, Keychain password reads, and the
+secret folders. This is a **speed bump**: it stops honest mistakes and obvious injections, in and out of the fence.
+The fence makes the folders real for fenced commands (a glob that gets past the text match still can't read them).
 
 **What is left, said plainly:**
 
-- Inside a grant, anything in its folders can be changed or deleted, by a command that isn't what it looks like
-  too. Grant project folders that are in git. Reads (tier 0 and grants) reach the whole Mac except the denied
-  folders, as `read_file` always did.
-- A network grant can send data anywhere: there is no domain allowlist, and a plain `curl https://host/<data>` is
-  not tier 2. Grant network only when the task needs it.
-- Since v0.5.2 an Allow Once also covers the identical call for 5 minutes, from any chat: what you allowed, again.
-  And a grant hint tells another chat that a grant exists in that folder (its first 6 characters and end time).
-- Since v0.5.2 tier 2's program words count only where they run. A program reached some other way (an
-  interpreter's `os.system`, a script file that calls `security`) was never tier 2 and still isn't; the grant's
-  sandbox is what holds there (`security`, `osascript`, `defaults` and `launchctl` can't start in it).
-- Reads may use only harmless variables (`$HOME`, `$PWD`, `$USER`...): `echo $SOME_TOKEN` asks. Files are another
-  matter: tier 0, like `read_file` always, can read `~/.zprofile` and any other file outside the denied folders.
-- macOS volumes are case-insensitive: `~/.SSH` is `~/.ssh`. The deny and always-ask checks fold case on the Mac,
-  and every Seatbelt path rule has an any-case twin (v0.3.2).
-- With the network off, sandboxed code can still ask the system resolver for a name: a narrow channel out (DNS)
-  that the profile doesn't close.
+- **Your work is not protected.** Inside your home folder, anything outside the protected paths can be changed or
+  deleted by a fenced command: `rm -rf`, an overwritten file, a `git reset --hard` (git's objects are writable; only
+  hooks, config and `.git` itself are protected). Keep projects in git, pushed, and Time Machine on. A `git push
+  --force` or an upload runs as soon as Claude asks for it with `outside_sandbox`.
+- **The network is on.** A fenced command can send what it can read (anything outside the denied folders) anywhere:
+  there is no domain allowlist. Set `network: false` if your work allows it.
+- **`outside_sandbox` is a shell as you.** It can do everything you can in Terminal, including editing Claude's own
+  config, this server's installed copy or your rc files. Its guards are the why, the log, your client's permission
+  mode, and Claude's instructions. A prompt injection that convinces Claude to use it gets that shell.
+- **Not every file that runs later is on the list.** The fence protects the common ones. Others in your home folder
+  are writable: other MCP servers' own code, tools installed in your home folder outside `~/.local/bin` and `~/bin`,
+  `~/.npmrc` and similar configs, editor extensions and settings outside `.vscode`/`.idea`, `~/Library/Preferences`.
+  Add what matters to you to `protected_paths`.
+- With the network off, sandboxed code can still ask the system resolver for a name: a narrow channel out (DNS).
 - Sandboxed code can still reach system services the guards don't name (preferences, launchd, Apple Events from a
-  program of its own). The `defaults`, `launchctl` and `osascript` programs can't start in the sandbox, and their
-  changes are tier 2, but a program compiled or scripted under a grant could talk to those services directly.
-- A prompt injection in the chat that holds a token can use it, within its folders, minutes and network. That is
-  what the bounds are for, and why a Deny revokes.
-- MCP elicitation (approving in the Claude app, e.g. from the phone) isn't offered by Claude desktop yet;
-  `approval_status` shows when the client starts offering it.
+  program of its own). The `defaults`, `launchctl` and `osascript` programs can't start in the fence, but a program
+  compiled or scripted there could talk to those services directly.
+- macOS volumes are case-insensitive: `~/.SSH` is `~/.ssh`. The checks fold case on the Mac, and every Seatbelt path
+  rule has an any-case twin.
 
-**What the server itself never does:** network calls, telemetry, self-update, or changing its own policy. It has no
-dependencies.
+**What the server itself never does:** network calls, telemetry, self-update, dialogs, or changing its own policy. It
+has no dependencies.
 
 ## Configuration
 
-`policy.json` is the whole configuration; `load_policy` in the server holds the defaults and refuses unknown keys.
-The keys you are most likely to touch:
+`policy.json` is the whole configuration; `load_policy` in the server holds the defaults and refuses unknown keys
+(0.6's dialog and grant keys still load: they are ignored, and `status` lists them). The keys you are most likely to
+touch:
 
 | Key | Default | What |
 |---|---|---|
-| `protected_folders` | `[]` | Folders no grant may cover; writes there always ask. |
-| `deny_words`, `deny_patterns`, `deny_paths` | sudo, ssh, Keychain reads, `~/.ssh`, `~/.aws`, ... | Refused outright (speed bump; `deny_paths` are also enforced by the sandbox). |
-| `always_ask`, `always_ask_programs`, `always_ask_paths`, `protected_writes` | see file | Tier 2: asks every time. |
-| `grant_minutes`, `grant_max_minutes`, `grant_max_calls`, `grant_max_folders` | 60, 240, 1000, 5 | Grant bounds. |
-| `allow_repeat_minutes` | 5 | After an Allow Once, the identical call runs again without asking for this long (0 = off). |
-| `approvals` | `tiers` | `every` makes every gated call ask (the v0.2 behaviour). |
+| `fence_writable` | `["~"]` | Where fenced commands may write, besides temp. Adding `/opt/homebrew` lets `brew install` run fenced, and lets a command replace a program something else runs later. |
+| `protected_paths`, `protected_writes` | see file | Never writable in the fence; refused by `write_file`/`edit_file`. (`always_ask_paths` in a 0.6 policy is read as `protected_paths`.) |
+| `protected_folders` | `[]` | Folders whose contents are someone's sign-off: never writable here. |
+| `deny_words`, `deny_patterns`, `deny_paths` | sudo, ssh, Keychain reads, `~/.ssh`, `~/.aws`, ... | Refused outright (speed bump; `deny_paths` are also unreadable and unwritable in the fence). |
+| `network` | `true` | The fence's network. |
+| `allow_outside_sandbox` | `true` | `false`: `outside_sandbox` is refused. |
+| `sandbox_fail` | `refuse` | What shell commands do if the self-test fails here: `refuse` or `unsandboxed`. |
 | `state_dir` | `~/.local/state/mac-ops` | Audit log and state. |
 
 For settings specific to your Mac (extra protected folders or denied paths), copy `policy.json` to
-`policy.local.json` (git-ignored) and edit that: `install.sh` installs it instead when it exists.
+`policy.local.json` (git-ignored) and edit that: `install.sh` installs it instead when it exists. A `policy.local.json`
+made from 0.6's `policy.json` still loads (its dialog and grant keys are ignored, and its protected lists gain 0.7's
+additions), but copy the new one again when you can and re-add your changes.
 
-Changing the policy means editing it here and re-running `install.sh`: the installed copy is read-only and
-no tool can change it.
+Changing the policy means editing it here and re-running `install.sh`: the installed copy is read-only and no tool
+can change it.
 
 ## Typical use
 
 - Keep the Mac awake during a long session: `keep_awake` (mode on).
 - A long build, migration or log tail: `session_start name=build command="make all"`, then
   `session_read name=build wait_s=30` until `[mac-ops: exit N]`.
-- A coding task: `request_grant purpose="fix the export script" folders=["~/Documents/.../repo"] minutes=60` (one
-  dialog), then `run`/`write_file`/`session_*` with that `grant`; a `git push` at the end asks once more.
-- What's going on with approvals: `approval_status`.
+- A coding task: `run`, `edit_file`, `session_*` in the project folder, no dialogs. At the end, `git push` fails in
+  the fence (no Keychain) and Claude reruns it with `outside_sandbox=true why="push the fix the user asked for"`.
+- What's going on: `status`, or `tail -f ~/.local/state/mac-ops/audit.jsonl`.
 
 ## Development
 
 - Run the tests before anything else: `python3 -B -m unittest discover -s tests -v` (on Linux/CI, set `TMPDIR=/tmp`;
-  the Mac-only sandbox tests skip there).
+  the Mac-only sandbox tests skip there). Run them in Terminal, not through Mac Ops: some create `.git` folders, which
+  the fence refuses.
 - The installed copy is what runs. Editing this folder changes nothing until `install.sh` runs again — don't present
   an edit as live.
-- Changes to the approval code (tiers, the read allowlist, grants, the sandbox profiles) are security changes: add a
-  test that fails without the change, and never weaken a protection to make a test pass.
-- `python3 -I -B mac_ops_server.py --preview-dialogs` shows every kind of dialog without running anything.
+- Changes to the fence (the profile, the protected lists, the self-test, `outside_sandbox`, the file tools' refusals)
+  are security changes: add a test that fails without the change, and never weaken a protection to make a test pass.
 - Notes for Claude sessions working on this repo: [CLAUDE.md](CLAUDE.md).
 
 ## License
 
-Not chosen yet. Until a `LICENSE` file is added, all rights are reserved by the author.
+[MIT](LICENSE).
