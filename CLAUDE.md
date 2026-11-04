@@ -1,10 +1,10 @@
-# Mac Ops — notes for Claude sessions working on this repo
+# Mac Terminal MCP — notes for Claude sessions working on this repo
 
 Read `README.md` first (the fence, the safety model), then `docs/design-decisions.md`.
 
 - **The installed copy is what runs.** Editing this folder changes nothing until a person re-runs `install.sh` in
-  their own Terminal (it refuses to run from a command Mac Ops runs). Say so when you change the server or the policy;
-  never present an edit as live.
+  their own Terminal (it refuses to run from a command this server runs). Say so when you change the server or the
+  policy; never present an edit as live.
 - **There are no tiers or dialogs (0.7).** The security boundary is the fence: the Seatbelt profile (`sb_profile`), its
   self-test (`_selftest`), the protected lists in the policy, the file tools' refusals (`protected_write`), and
   `outside_sandbox` (`route_for`). Changes to any of them are security changes. Prefer handing them over as a reviewed
@@ -20,3 +20,6 @@ Read `README.md` first (the fence, the safety model), then `docs/design-decision
 - **Nothing deployment-specific in this repo**: no host names, internal paths, people's names, tokens or captured
   state. Local configuration (extra `protected_folders`, `deny_paths`) belongs in the user's own
   `policy.local.json`, not in commits.
+- **The name lives in constants**: `APP` ("mac-terminal": server key, folders, tmux socket, markers), `APP_TITLE`,
+  `APP_ENV` in the server, and `NAME`/`TITLE`/`SERVER_PY`/`ENV_PREFIX` in install.sh. It was Mac Ops ("mac-ops",
+  `MAC_OPS`) until 0.7; install.sh's `OLD_*` handles upgrades. Don't spell the name out anywhere else in code.

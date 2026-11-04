@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""mac_ops_server.py — Claude's hands on your Mac: a local MCP server (stdio, standard library only).
+"""mac_terminal_mcp.py — Mac Terminal MCP: a sandboxed terminal for Claude on your Mac. A local MCP server (stdio,
+standard library only). Renamed from Mac Ops in 0.7.
 
-Installed by install.sh as the "mac-ops" entry of Claude desktop, from a READ-ONLY COPY:
+Installed by install.sh as the "mac-terminal" entry of Claude desktop, from a READ-ONLY COPY:
 
-  "mac-ops": {"command": "/usr/bin/python3",
-              "args": ["-I", "-B", "~/.config/claude-mcp/mac-ops/mac_ops_server.py"],
-              "env": {"MAC_OPS_POLICY": "~/.config/claude-mcp/mac-ops/policy.json"}}
+  "mac-terminal": {"command": "/usr/bin/python3",
+                   "args": ["-I", "-B", "~/.config/claude-mcp/mac-terminal/mac_terminal_mcp.py"],
+                   "env": {"MAC_TERMINAL_POLICY": "~/.config/claude-mcp/mac-terminal/policy.json"}}
 
-Why a copy: the Mac Ops folder is writable by every Claude session connected to it. Claude desktop runs the copy
+Why a copy: the repository folder is writable by every Claude session connected to it. Claude desktop runs the copy
 with the system Python (-I -B), so a change here goes live only when install.sh runs again.
 
 Tools (every call is written to the audit log before it runs; README.md has the safety model):
   run                        one shell command, up to 45 s, no stdin
   session_start / _send / _read / _list / _stop
                              long-running and parallel work in tmux sessions on a dedicated socket
-                             (you watch or take over with: tmux -L claude attach -t <name>)
+                             (you watch or take over with: tmux -L mac-terminal attach -t <name>)
   read_file, write_file, edit_file
                              text files (read_file also .docx, .xlsx, .pptx, .pdf); through tmux where macOS privacy
                              stops this process
@@ -58,10 +59,14 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 VERSION = "0.7.0"
-SERVER = {"name": "mac-ops", "version": VERSION}
+# The name, in as few places as possible: the MCP server key, its folders and tmux socket, its markers (APP); what
+# people read (APP_TITLE); the prefix of its environment variables (APP_ENV: MAC_TERMINAL=1 in every command it runs,
+# MAC_TERMINAL_POLICY for the policy file). 0.6 and before were "mac-ops" / MAC_OPS.
+APP, APP_TITLE, APP_ENV = "mac-terminal", "Mac Terminal MCP", "MAC_TERMINAL"
+SERVER = {"name": APP, "version": VERSION}
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 HERE = os.path.dirname(os.path.abspath(__file__))
-MARKER_RE = re.compile(r"\[mac-ops: exit (\d+)\]")
+MARKER_RE = re.compile(r"\[" + re.escape(APP) + r": exit (\d+)\]")
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 APP_RE = re.compile(r"^[A-Za-z0-9 ._()-]{1,80}$")
 KEYS = ("C-c", "C-d", "C-z", "C-l", "Enter", "Escape", "Tab", "Up", "Down", "Space", "BSpace")
@@ -74,7 +79,7 @@ DEFAULT_POLICY = {
     "shell": ["/bin/zsh", "-l", "-c"],          # run, and the command of a job session
     "session_shell": ["/bin/zsh", "-l"],        # the interactive shell of a session
     "tmux": "tmux",
-    "tmux_socket": "claude",
+    "tmux_socket": APP,                         # not the generic "claude" (0.6): another tool could use that
     "default_cwd": "~",
     "run_timeout_max_s": 45,                    # the desktop bridge gives a tool call 60 s
     "output_max_chars": 30000,
@@ -86,12 +91,12 @@ DEFAULT_POLICY = {
     # Refused by every tool that takes a path or a command naming one; unreadable and unwritable in the fence.
     "deny_paths": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.kube", "~/.docker/config.json", "~/.netrc",
                    "~/Library/Keychains", "~/Library/Application Support/Claude", "~/.config/claude-mcp",
-                   "~/.local/state/mac-ops", "~/.git-credentials", "~/.pypirc", "~/.vault-token", "~/.pgpass",
+                   f"~/.local/state/{APP}", "~/.git-credentials", "~/.pypirc", "~/.vault-token", "~/.pgpass",
                    "~/.my.cnf", "~/.config/gh"],
     # Folders whose contents are someone's sign-off (approved playbooks, release configs) or that another, stricter
     # tool owns: unwritable in the fence, refused by write_file and edit_file.
     "protected_folders": [],
-    "state_dir": "~/.local/state/mac-ops",
+    "state_dir": f"~/.local/state/{APP}",
     "sandbox_exec": "/usr/bin/sandbox-exec",
     "sandbox_selftest": True,                   # false only in tests, with a stand-in sandbox_exec
     # v0.7: what fenced calls do when the self-test fails on this Mac: "refuse" (the shell tools refuse; status says
@@ -152,7 +157,7 @@ INSTRUCTIONS = (
     "write_file. Both refuse the files the fence protects. read_file also reads .docx, .xlsx, .pptx and .pdf.\n"
     "- run: short commands (up to 45 s, no stdin). Anything longer, interactive or meant to keep running: "
     "session_start (tmux), then session_read with wait_s/until. Several sessions can run at once; the user can watch any "
-    "of them with `tmux -L claude attach -t <name>`. A session keeps the sandbox it started with; typing into an "
+    f"of them with `tmux -L {APP} attach -t <name>`. A session keeps the sandbox it started with; typing into an "
     "unsandboxed one needs outside_sandbox=true and a why on every session_send.\n"
     "- Remote hosts are not reachable from here (ssh, scp, ansible are denied). Never work around that from this "
     "shell.\n"
@@ -224,7 +229,7 @@ def load_policy(path: str | None) -> dict:
 def policy() -> dict:
     global _P
     if _P is None:
-        _P = load_policy(os.environ.get("MAC_OPS_POLICY") or os.path.join(HERE, "policy.json"))
+        _P = load_policy(os.environ.get(f"{APP_ENV}_POLICY") or os.path.join(HERE, "policy.json"))
         reset_state()
     return _P
 
@@ -617,6 +622,9 @@ def sb_argv(route) -> list:
     return fence_argv(sb_profile())
 
 
+TMUX_REACHED = APP + "-tmux-reached"
+
+
 def tmux_probe(run_fenced, work: str, sockpath: str) -> tuple:
     """From inside the fence, try to reach this server's tmux (unsandboxed, so whatever it runs is too): by its name
     (-L), and through a symlink and a hard link to its socket in a writable folder. -> (refused all three ways, with a
@@ -624,21 +632,24 @@ def tmux_probe(run_fenced, work: str, sockpath: str) -> tuple:
     T, S, q = tmux_exe(), policy()["tmux_socket"], shlex.quote
     sl, hl = os.path.join(work, "tmux-sl"), os.path.join(work, "tmux-hl")
     script = (f"rm -f {q(sl)} {q(hl)}; "
-              f"{q(T)} -L {q(S)} list-sessions -F mac-ops-tmux-reached-L 2>/dev/null; echo tmux-L-rc=$?; "
+              f"{q(T)} -L {q(S)} list-sessions -F {TMUX_REACHED}-L 2>/dev/null; echo tmux-L-rc=$?; "
               f"ln -s {q(sockpath)} {q(sl)} 2>/dev/null; "
-              f"{q(T)} -S {q(sl)} list-sessions -F mac-ops-tmux-reached-sl 2>/dev/null; echo tmux-sl-rc=$?; "
+              f"{q(T)} -S {q(sl)} list-sessions -F {TMUX_REACHED}-sl 2>/dev/null; echo tmux-sl-rc=$?; "
               f"ln {q(sockpath)} {q(hl)} 2>/dev/null; "
-              f"{q(T)} -S {q(hl)} list-sessions -F mac-ops-tmux-reached-hl 2>/dev/null; echo tmux-hl-rc=$?")
+              f"{q(T)} -S {q(hl)} list-sessions -F {TMUX_REACHED}-hl 2>/dev/null; echo tmux-hl-rc=$?")
     _, out = run_fenced(["/bin/sh", "-c", script])
     ways = ("L", "sl", "hl")
     held = (all(re.search(rf"^tmux-{w}-rc=[1-9][0-9]*$", out, re.M) for w in ways) and
-            "mac-ops-tmux-reached" not in out)
+            TMUX_REACHED not in out)
     for p in (sl, hl):
         try:
             os.remove(p)
         except OSError:
             pass
     return held, out
+
+
+SECRET = APP + "-secret-7f3"                            # what the self-test's denied files hold
 
 
 def _selftest() -> dict:
@@ -671,7 +682,7 @@ def _selftest() -> dict:
     outside = os.path.join(scratch, "outside")                   # not a root: unwritable
     prot = os.path.join(work, "protected-rc")                    # stands in for protected_paths / protected_folders
     deny = os.path.join(work, "denied")                          # stands in for deny_paths
-    tmpf = os.path.join(temp_dirs()[0], f"mac-ops-probe-{tag}")
+    tmpf = os.path.join(temp_dirs()[0], f"{APP}-probe-{tag}")
     secret = os.path.join(base, "secret")
     junk = [tmpf]
     sh = "/bin/sh"
@@ -700,23 +711,23 @@ def _selftest() -> dict:
         for d in (outside, prot, deny, os.path.join(work, ".git", "hooks")):
             os.makedirs(d, mode=0o700, exist_ok=True)
         with open(secret, "w", encoding="utf-8") as f:
-            f.write("mac-ops-secret-7f3\n")
+            f.write(SECRET + "\n")
         with open(os.path.join(deny, "k"), "w", encoding="utf-8") as f:
-            f.write("mac-ops-secret-7f3\n")
+            f.write(SECRET + "\n")
         fence = sb_profile(extras=[], sockets=False, path_dirs=[])
         probe = sb_profile(extras=[], roots=[work], more_deny=[deny], more_protected=[prot], sockets=False,
                            path_dirs=[])
-        basic = list(P["shell"]) + ["echo mac-ops-ok; git --version >/dev/null 2>&1 && echo git-ok; "
-                                    "printf 'mac-ops-path=%s\\n' \"$PATH\""]
+        basic = list(P["shell"]) + [f"echo {APP}-ok; git --version >/dev/null 2>&1 && echo git-ok; "
+                                    f"printf '{APP}-path=%s\\n' \"$PATH\""]
         rc, out = sb(fence, basic)
-        if "mac-ops-ok" not in out:
+        if APP + "-ok" not in out:
             return fail(f"a shell does not start inside the sandbox (rc {rc}): {out.strip()[-300:]}")
         want_git = "git-ok" in out
-        m = re.search(r"^mac-ops-path=(.*)$", out, re.M)
+        m = re.search(rf"^{re.escape(APP)}-path=(.*)$", out, re.M)
         pdirs = writable_path_dirs((m.group(1) if m else "") + ":" + env()["PATH"])
         st["path_dirs"] = pdirs
-        rc, out = sb(fence, [sys.executable, "-I", "-c", "print('mac-ops-' + 'py')"])
-        if "mac-ops-py" not in out:
+        rc, out = sb(fence, [sys.executable, "-I", "-c", f"print('{APP}-' + 'py')"])
+        if APP + "-py" not in out:
             return fail(f"a program's output does not come back from the sandbox (rc {rc}): {out.strip()[-300:]}")
         st["checks"].append("shell starts, output comes back")
         sb(probe, ["/usr/bin/touch", os.path.join(work, "ok")])
@@ -750,14 +761,14 @@ def _selftest() -> dict:
         dk = os.path.join(deny, "k")
         rc, out = sb(probe, [sh, "-c", f"/bin/cat {shlex.quote(secret)}; echo cat-rc=$?; "
                                        f"/bin/cat {shlex.quote(dk)}; echo cat-rc=$?"])
-        if "mac-ops-secret-7f3" in out or out.count("cat-rc=1") != 2:
+        if SECRET in out or out.count("cat-rc=1") != 2:
             return fail(f"the sandbox did not refuse a read of a denied folder or the state folder: {out.strip()[-200:]}")
         st["checks"].append("denied paths and the state folder unreadable")
         sd = P["state_dir"]
         others = [x for x in (other_case(dk, work), other_case(secret, os.path.dirname(sd))) if x]
         for x in others:
             rc, out = sb(probe, [sh, "-c", f"/bin/cat {shlex.quote(x)}; echo cat-rc=$?"])
-            if "mac-ops-secret-7f3" in out or "cat-rc=1" not in out:
+            if SECRET in out or "cat-rc=1" not in out:
                 return fail(f"the sandbox let a denied file be read in another letter case: {out.strip()[-200:]}")
         if others:
             st["checks"].append("and in another letter case")
@@ -795,16 +806,16 @@ def _selftest() -> dict:
         sockpath = next((x.strip() for x in ctl.splitlines() if x.strip().startswith("/")), "")
         if not sockpath:
             return fail(f"tmux check inconclusive (its socket path did not come back unsandboxed): {ctl[-200:]}")
-        _, ctl, _, _ = via_tmux([T, "-L", P["tmux_socket"], "list-sessions", "-F", "mac-ops-tmux-reached"], home(), 15,
+        _, ctl, _, _ = via_tmux([T, "-L", P["tmux_socket"], "list-sessions", "-F", TMUX_REACHED], home(), 15,
                                 merge=True)
-        if "mac-ops-tmux-reached" not in ctl:
+        if TMUX_REACHED not in ctl:
             return fail(f"tmux check inconclusive (the unsandboxed client could not reach it either): {ctl[-200:]}")
         sockets, tried = None, []
         for form in SOCKET_FORMS:
             prof = sb_profile(extras=[], roots=[work], more_deny=[deny], more_protected=[prot], sockets=form,
                               path_dirs=pdirs)
             rc, out = sb(prof, basic)
-            if "mac-ops-ok" not in out:
+            if APP + "-ok" not in out:
                 tried.append(f"{form[0]}{'+link' if form[1] else ''}: not taken")
                 continue
             held, out = tmux_probe(lambda argv: sb(prof, argv), work, sockpath)
@@ -823,7 +834,7 @@ def _selftest() -> dict:
         for name in SB_EXTRAS:
             prof = sb_profile(extras=[name], sockets=sockets, path_dirs=pdirs)
             rc, out = sb(prof, basic)
-            if not ("mac-ops-ok" in out and ("git-ok" in out) == want_git):
+            if not (APP + "-ok" in out and ("git-ok" in out) == want_git):
                 continue
             if name == "signals":                       # proven: it must not be able to kill a process outside
                 sb(prof, [sh, "-c", f"kill {sleeper.pid}"])
@@ -833,8 +844,8 @@ def _selftest() -> dict:
             st["extras"].append(name)
         if st["extras"]:                                # all of them together, as real calls get them
             rc, out = sb(sb_profile(extras=st["extras"], sockets=sockets, path_dirs=pdirs),
-                         [sys.executable, "-I", "-c", "print('mac-ops-' + 'py')"])
-            if "mac-ops-py" not in out:
+                         [sys.executable, "-I", "-c", f"print('{APP}-' + 'py')"])
+            if APP + "-py" not in out:
                 st["extras"] = []
                 st["checks"].append("extra guards dropped: together they broke program output")
         st["ok"] = True
@@ -952,7 +963,7 @@ def env() -> dict:
     e["PATH"] = ":".join(parts)
     e["SHELL"] = policy()["session_shell"][0]
     e.setdefault("LANG", "en_US.UTF-8")
-    e["MAC_OPS"] = "1"
+    e[APP_ENV] = "1"
     return e
 
 
@@ -1187,7 +1198,7 @@ def read_rc(name: str) -> str | None:
 
 
 def start_session(name: str, cwd: str, command: str | None, route=None) -> None:
-    """A job session runs `command` once, prints '[mac-ops: exit N]', writes N to its rc file, and then stays open
+    """A job session runs `command` once, prints '[APP: exit N]', writes N to its rc file, and then stays open
     as an interactive shell (attach and carry on). No command: just the interactive shell. With a fenced route,
     the command and the shell after it run in the fence; the wrapper around them (marker, rc file) does not."""
     if has_session(name):
@@ -1202,7 +1213,7 @@ def start_session(name: str, cwd: str, command: str | None, route=None) -> None:
         if os.path.exists(rcf):
             os.remove(rcf)
         inner = pre + " ".join(shlex.quote(x) for x in list(policy()["shell"]) + [command])
-        script = (f"{inner}; rc=$?; printf '\\n[mac-ops: exit %s]\\n' \"$rc\"; "
+        script = (f"{inner}; rc=$?; printf '\\n[{APP}: exit %s]\\n' \"$rc\"; "
                   f"printf '%s' \"$rc\" > {shlex.quote(rcf)}; exec {shell_i}")
     tmux("new-session", "-d", "-s", name, "-x", "220", "-y", "50", "-c", cwd, script)
     mode = route.mode if route is not None else "unsandboxed"
@@ -1323,7 +1334,7 @@ def t_session_send(a: dict) -> str:
     if text is not None:
         deny_check(text)
     # What typing here can do is bounded by the session's own sandbox, fixed when it started. Into an unsandboxed
-    # session (outside_sandbox, or one Mac Ops didn't start) every call says so again, with its own why (v0.7).
+    # session (outside_sandbox, or one this server didn't start) every call says so again, with its own why (v0.7).
     mode = session_mode(name)
     outside = b_arg(a, "outside_sandbox", False)
     why = (s_arg(a, "why", maxlen=300) or "").strip()
@@ -1332,7 +1343,7 @@ def t_session_send(a: dict) -> str:
             raise Refused(f"session {name} runs outside the sandbox, and outside_sandbox is off on this Mac (policy "
                           "allow_outside_sandbox: false): nothing was typed. Tell the user what to type there.")
         if not (outside and why):
-            raise Refused(f"session {name} runs outside the sandbox (started with outside_sandbox, or not by Mac Ops): "
+            raise Refused(f"session {name} runs outside the sandbox (started with outside_sandbox, or not by {APP_TITLE}): "
                           "whatever is typed there runs as the user with no sandbox, so every session_send to it needs "
                           "outside_sandbox=true and why (what the user asked for). Nothing was typed.")
         _routed(Route("unsandboxed", "outside_sandbox: " + why))
@@ -1520,8 +1531,8 @@ def office_text(data: bytes, ext: str, path: str) -> str:
 PDF_SWIFT = """import Foundation
 import PDFKit
 let a = CommandLine.arguments
-guard a.count == 2, let d = PDFDocument(url: URL(fileURLWithPath: a[1])) else { print("mac-ops-pdf: cannot open"); exit(2) }
-if d.isLocked { print("mac-ops-pdf: locked with a password"); exit(3) }
+guard a.count == 2, let d = PDFDocument(url: URL(fileURLWithPath: a[1])) else { print("pdftext: cannot open"); exit(2) }
+if d.isLocked { print("pdftext: locked with a password"); exit(3) }
 for i in 0..<d.pageCount { print("## Page \\(i + 1)"); print(d.page(at: i)?.string ?? ""); print("") }
 """
 
@@ -1622,7 +1633,7 @@ def write_local(path: str, data: bytes, mode: str, make: bool) -> None:
             f.write(data)
         return
     perm = os.stat(path).st_mode & 0o7777 if os.path.exists(path) else None
-    fd, tmp = tempfile.mkstemp(dir=parent, prefix=".mac-ops-")
+    fd, tmp = tempfile.mkstemp(dir=parent, prefix=f".{APP}-")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -1638,6 +1649,9 @@ def write_local(path: str, data: bytes, mode: str, make: bool) -> None:
         except OSError:
             pass
         raise
+
+
+WRITTEN = APP + "-written"
 
 
 def write_text(path: str, content: str, mode: str, make: bool) -> None:
@@ -1659,7 +1673,7 @@ def write_text(path: str, content: str, mode: str, make: bool) -> None:
             os.remove(infile)
         except OSError:
             pass
-    if rc != 0 or "mac-ops-written" not in out:
+    if rc != 0 or WRITTEN not in out:
         raise Refused(f"could not write {path}: {out.strip()[-300:] or 'the helper failed'}")
 
 
@@ -1940,7 +1954,7 @@ OLD_ROUTE = {"read": "fenced", "grant": "fenced", "full": "unsandboxed"}       #
 def t_status(a: dict) -> str:
     P = policy()
     st = sandbox_status()
-    out = [f"mac-ops {VERSION}: no dialogs; shell commands run in the fence (a macOS sandbox)"]
+    out = [f"{APP_TITLE} {VERSION} ({APP}): no dialogs; shell commands run in the fence (a macOS sandbox)"]
     if st["ok"]:
         out.append(f"  fence: working. Self-test: {'; '.join(st.get('checks', [])) or st['reason']}")
         out.append(f"  extra guards: {', '.join(st['extras']) or 'none'}")
@@ -2015,7 +2029,7 @@ TOOLS = {
                 "timeout_s": {"type": "number", "minimum": 1, "maximum": 45}, "why": WHY, "outside_sandbox": OUTSIDE},
                ["command"]), EXEC),
     "session_start": (t_session_start, "Start a tmux session: with `command`, a job that runs it once and then "
-                                       "leaves a shell open (its end prints '[mac-ops: exit N]'); without, an "
+                                       f"leaves a shell open (its end prints '[{APP}: exit N]'); without, an "
                                        "interactive shell. Sessions keep running between calls and across Claude "
                                        "restarts; several can run at once. It runs in the fence, like run, and keeps "
                                        "that sandbox for everything typed into it; outside_sandbox=true (with why) "
@@ -2150,14 +2164,14 @@ def handle(msg: dict) -> dict | None:
 
 
 def write_helper(argv: list) -> int:
-    """`mac_ops_server.py --write-helper IN PATH MODE MAKE`, run by write_text in tmux where macOS privacy stops the
+    """`mac_terminal_mcp.py --write-helper IN PATH MODE MAKE`, run by write_text in tmux where macOS privacy stops the
     server's own Python. Not a tool: the server checked the write (refuse_protected) before it starts this."""
     try:
         infile, path, mode, make = argv
         with open(infile, "rb") as f:
             data = f.read()
         write_local(path, data, mode, make == "1")
-        print("mac-ops-written")
+        print(WRITTEN)
         return 0
     except Exception as e:
         print(f"{type(e).__name__}: {e}")

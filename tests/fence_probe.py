@@ -1,9 +1,9 @@
-"""By hand, on a Mac: what the fence (Mac Ops' one sandbox profile, v0.7) blocks and allows here, probe by probe,
+"""By hand, on a Mac: what the fence (Mac Terminal MCP's one sandbox profile, v0.7) blocks and allows here, probe by probe,
 beyond what the self-test proves at every start. Run it unsandboxed, in Terminal:
 
     /usr/bin/python3 -I -B tests/fence_probe.py
 
-It uses the policy next to the server (policy.local.json if present, else policy.json; or MAC_OPS_POLICY) and the
+It uses the policy next to the server (policy.local.json if present, else policy.json; or MAC_TERMINAL_POLICY) and the
 extra guards this Mac's self-test accepts. It creates only probe files with a random tag (in the home folder, temp, a
 scratch repo under ~/.local/state, and, if the fence failed, /Users/Shared or ~/Library/LaunchAgents) and removes
 them at the end. Calculator may start hidden for a second (the open probes). It prints a table: 'yes' is what the
@@ -22,9 +22,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 for name in ("policy.local.json", "policy.json"):
     if os.path.exists(os.path.join(ROOT, name)):
-        os.environ.setdefault("MAC_OPS_POLICY", os.path.join(ROOT, name))
+        os.environ.setdefault("MAC_TERMINAL_POLICY", os.path.join(ROOT, name))
         break
-import mac_ops_server as M  # noqa: E402
+import mac_terminal_mcp as M  # noqa: E402
 
 q = shlex.quote
 MACH_PY = ("import ctypes, sys\nlibc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')\n"
@@ -39,16 +39,16 @@ def main():
     if sys.platform != "darwin":
         sys.exit("macOS only")
     st = M._selftest()
-    print(f"mac-ops {M.VERSION}, policy {P['_path']}: self-test", "PASS" if st["ok"] else "FAIL " + st["reason"],
+    print(f"{M.APP_TITLE} {M.VERSION}, policy {P['_path']}: self-test", "PASS" if st["ok"] else "FAIL " + st["reason"],
           "| extras:", st["extras"])
     prof = M.sb_profile(extras=st["extras"] if st["ok"] else [], sockets=tuple(st.get("sockets") or M.SOCKET_FORMS[0]),
                         path_dirs=st.get("path_dirs", []))
     H, tag = M.home(), f"{os.getpid()}-{os.urandom(3).hex()}"
     repo = os.path.realpath(P["state_dir"]) + f"-probe-{tag}"
-    junk = [os.path.join(H, f".mac-ops-probe-{tag}"), f"/Users/Shared/.mac-ops-probe-{tag}",
-            os.path.join(H, "Library", "LaunchAgents", f".mac-ops-probe-{tag}"), f"/private/tmp/mac-ops-probe-{tag}"]
+    junk = [os.path.join(H, f".mac-terminal-probe-{tag}"), f"/Users/Shared/.mac-terminal-probe-{tag}",
+            os.path.join(H, "Library", "LaunchAgents", f".mac-terminal-probe-{tag}"), f"/private/tmp/mac-terminal-probe-{tag}"]
     tmux = M.tmux_exe()
-    junk.append(tmux + f".mac-ops-probe-{tag}")
+    junk.append(tmux + f".mac-terminal-probe-{tag}")
     r = {}
 
     def run(argv, cwd=H, timeout=25):
@@ -119,7 +119,7 @@ def main():
                      "$(command -v $p) >/dev/null 2>&1; echo $p-rc=$?; done")
         for p in ("osascript", "open", "security", "defaults", "pbpaste", "launchctl"):
             r[f"{p} can't start"] = f"{p}-rc=126" in out
-        copy = f"/private/tmp/mac-ops-probe-open-{tag}"
+        copy = f"/private/tmp/mac-terminal-probe-open-{tag}"
         junk.append(copy)
         shutil.copyfile("/usr/bin/open", copy)
         os.chmod(copy, 0o755)

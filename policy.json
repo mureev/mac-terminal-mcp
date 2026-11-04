@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Mac Ops policy, installed read-only next to the server by install.sh (which writes tmux's full path).",
+    "Mac Terminal MCP policy, installed read-only next to the server by install.sh (which writes tmux's full path).",
     "v0.7: no dialogs. run and session_start commands run in the fence, a macOS sandbox: reads everywhere but",
     "deny_paths; writes only under fence_writable and temp, never to protected_paths, protected_writes matches or",
     "protected_folders; network as 'network' says. outside_sandbox=true (with a why) runs one call with no sandbox,",
@@ -18,7 +18,7 @@
     "-l"
   ],
   "tmux": "tmux",
-  "tmux_socket": "claude",
+  "tmux_socket": "mac-terminal",
   "default_cwd": "~",
   "run_timeout_max_s": 45,
   "output_max_chars": 30000,
@@ -49,15 +49,16 @@
     "~/Library/Keychains",
     "~/Library/Application Support/Claude",
     "~/.config/claude-mcp",
-    "~/.local/state/mac-ops",
+    "~/.local/state/mac-terminal",
     "~/.git-credentials",
     "~/.pypirc",
     "~/.vault-token",
     "~/.pgpass",
-    "~/.my.cnf"
+    "~/.my.cnf",
+    "~/.config/gh"
   ],
   "protected_folders": [],
-  "state_dir": "~/.local/state/mac-ops",
+  "state_dir": "~/.local/state/mac-terminal",
   "sandbox_exec": "/usr/bin/sandbox-exec",
   "sandbox_selftest": true,
   "sandbox_fail": "refuse",
@@ -82,7 +83,14 @@
     "/Library/LaunchDaemons",
     "~/Applications",
     "~/.local/bin",
-    "~/bin"
+    "~/bin",
+    "~/.oh-my-zsh",
+    "~/.zsh",
+    "~/.config/zsh",
+    "~/.p10k.zsh",
+    "~/.config/fish",
+    "~/.npmrc",
+    "~/.docker/cli-plugins"
   ],
   "protected_writes": [
     "/[.]git/hooks(/|$)",

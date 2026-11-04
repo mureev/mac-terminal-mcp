@@ -1,6 +1,6 @@
 # Desktop Commander MCP: security audit (2026-10-31)
 
-Why Mac Ops exists. Lightly edited for publication: names of internal services and people are generalized.
+Why Mac Terminal MCP (then called Mac Ops) exists. Lightly edited for publication: names of internal services and people are generalized.
 
 **Question.** Should I install Desktop Commander (`@wonderwhy-er/desktop-commander`, ~10k GitHub stars) as a
 local MCP server, to give Claude a macOS shell for: small Mac tasks (caffeinate, files), long-running and multiple
@@ -8,7 +8,7 @@ sessions, and SSH to hosts for patches?
 
 **Verdict: no.** It does the job functionally, but its guardrails don't hold, it reports home by default, and it brings
 650 npm packages onto a laptop that holds production tokens and infrastructure repositories with live secrets. We built our own server,
-Mac Ops, instead (`../README.md`). Desktop Commander was never installed on the Mac.
+Mac Terminal MCP (then called Mac Ops), instead (`../README.md`). Desktop Commander was never installed on the Mac.
 
 **What was audited.** v0.3.1 (npm, last modified 2026-10-22). The package was unpacked and read in the cloud sandbox,
 never run on the Mac. Its dependency tree was resolved with `npm install --package-lock-only --ignore-scripts`. The
@@ -28,7 +28,7 @@ telemetry imports stubbed out.
    Windows tools. It has nothing Mac-specific: no `security`, `ssh`, `osascript`, `launchctl` or `defaults`.
 2. **Any shell running as the user can read the MCP tokens in the Keychain.** `security find-generic-password -w`
    returns the tokens of the other local MCP servers (monitoring, BI) without a prompt, because their install
-   scripts say to "Always Allow" `security`. This holds for any free-form shell, Mac Ops
+   scripts say to "Always Allow" `security`. This holds for any free-form shell, Mac Terminal MCP (then called Mac Ops)
    included. Only two things prevent it: a person approving each command, or running the shell as a separate macOS
    user.
 3. **`allowedDirectories` defaults to `[]`, which means the whole disk,** and it limits only the file tools. Terminal

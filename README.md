@@ -1,10 +1,13 @@
-# Mac Ops
+# Mac Terminal MCP
 
-**Claude's hands on your Mac, fenced by the macOS kernel instead of a dialog.**
+**A sandboxed terminal for Claude on your Mac. No dialogs, no dependencies, no telemetry.**
 
-Mac Ops is a local [MCP](https://modelcontextprotocol.io) server that gives Claude a shell on your Mac: run commands,
-keep long jobs going in tmux sessions, read and edit files, keep the Mac awake. It speaks plain stdio MCP, so any
-MCP client can use it; the installer sets it up for the Claude desktop app (chat and Cowork).
+Mac Terminal MCP is a local [MCP](https://modelcontextprotocol.io) server that gives Claude terminal access on your
+Mac: run commands, keep long jobs going in tmux sessions, read and edit files, keep the Mac awake.
+
+**Works with** the Claude desktop app — chat and Cowork — through the installer, and with any other stdio MCP
+client if you add the entry by hand (`/usr/bin/python3 -I -B mac_terminal_mcp.py`, with `MAC_TERMINAL_POLICY`
+pointing at a policy file). macOS only: the guard is the macOS sandbox.
 
 There are no approval dialogs. Every shell command runs at once, inside one macOS sandbox profile, *the fence*
 (Seatbelt, the mechanism Claude Code's own sandbox uses on macOS). The fence lets Claude do ordinary work — read the
@@ -15,10 +18,11 @@ LaunchAgents, git hooks and config, editor tasks, MCP and Claude Code config). W
 plainly asked for — a `git push` that needs the Keychain, a `brew install`, an `osascript` — Claude reruns it with
 `outside_sandbox=true` and a one-line why. That is logged and visible, never silent.
 
-> Desktop Commander guards with a pattern list; Mac Ops uses the macOS kernel sandbox.
+> Desktop Commander guards with a pattern list; Mac Terminal MCP uses the macOS kernel sandbox.
 > No dialogs, no dependencies, no telemetry.
 
 It is one Python file, standard library only, run by the system Python. No npm, no pip, no telemetry, no self-update.
+It was called Mac Ops until 0.7 ([why the name changed](docs/design-decisions.md)).
 
 If the Claude desktop app ships a native macOS shell with a sandbox, use that instead: this project will then be
 archived.
@@ -53,10 +57,12 @@ bash install.sh --check                 # what is there now (changes nothing)
 bash install.sh                         # runs the tests, quits Claude, installs, reopens Claude
 ```
 
-Run it from your own Terminal: it refuses to install from a command Mac Ops runs (a change to Mac Ops goes live only
-when a person installs it). **To update:** review `git diff`, commit, then run `bash install.sh` again. Nothing updates
+Run it from your own Terminal: it refuses to install from a command this server runs (a change goes live only when a
+person installs it). **To update:** review `git diff`, commit, then run `bash install.sh` again. Nothing updates
 by itself. **To remove:** `bash install.sh --remove`. It takes out the entry and the installed copy, and keeps the
-audit log.
+audit log. **From Mac Ops (0.6 and before):** the install replaces the `mac-ops` entry, removes its read-only copy
+(`~/.config/claude-mcp/mac-ops/`), and leaves its state folder with the old audit log (`~/.local/state/mac-ops/`) where
+it is; `--check` shows what is left of an old install, changing nothing.
 
 After installing, grant **tmux** access to your Documents folder once if Claude should work there (System Settings →
 Privacy & Security → Files & Folders → tmux): commands and reads that touch protected folders run through tmux, so
@@ -66,10 +72,10 @@ the server's own Python never needs Full Disk Access.
 
 | File | What |
 |---|---|
-| `mac_ops_server.py` | The server: MCP over stdio, the tools, the policy, the fence and its self-test, the audit log. |
+| `mac_terminal_mcp.py` | The server: MCP over stdio, the tools, the policy, the fence and its self-test, the audit log. |
 | `policy.json` | What it may do: shells, tmux, deny lists, protected paths and folders, network, where state goes. Installed read-only. |
-| `install.sh` | Installs the read-only copy and the `mac-ops` entry in Claude desktop; `--check` changes nothing; `--remove`. |
-| `tests/test_mac_ops.py` | The suite (stdlib `unittest`; needs tmux and git): `python3 -B -m unittest discover -s tests -v`. On a Mac it also tests the real sandbox; elsewhere those tests skip. |
+| `install.sh` | Installs the read-only copy and the `mac-terminal` entry in Claude desktop; `--check` changes nothing; `--remove`. |
+| `tests/test_mac_terminal_mcp.py` | The suite (stdlib `unittest`; needs tmux and git): `python3 -B -m unittest discover -s tests -v`. On a Mac it also tests the real sandbox; elsewhere those tests skip. |
 | `tests/fence_probe.py` | By hand, on a Mac: probe by probe, what the fence blocks and allows there (DNS, mach services, a copy of `open`, signals...). |
 | `tests/seatbelt_spike.sh` | A by-hand probe of what Seatbelt itself blocks on this Mac (from 0.3). |
 | `docs/` | The Desktop Commander audit and the design decisions. |
@@ -79,7 +85,7 @@ the server's own Python never needs Full Disk Access.
 | Tool | Does |
 |---|---|
 | `run` | One shell command (zsh login shell, as you, no stdin, up to 45 s), in the fence. Output and exit code. `outside_sandbox=true` + `why`: no sandbox. |
-| `session_start` | A tmux session, in the fence (or `outside_sandbox`). With `command`, a job: it runs once, prints `[mac-ops: exit N]`, and leaves a shell open. Without, an interactive shell. |
+| `session_start` | A tmux session, in the fence (or `outside_sandbox`). With `command`, a job: it runs once, prints `[mac-terminal: exit N]`, and leaves a shell open. Without, an interactive shell. |
 | `session_send` | Type into a session (and/or press `C-c`, `Enter`, ...), then wait for output (`wait_s`, `until` regex). It runs in the sandbox the session started with; into an unsandboxed session, every call needs `outside_sandbox=true` and its own `why`. |
 | `session_read`, `session_list`, `session_stop` | Read the last lines (optionally wait for new ones), list sessions (each marked fenced or unsandboxed), kill one. |
 | `read_file`, `write_file` | Text files; `read_file` also .docx/.xlsx/.pptx (stdlib, no DTDs, size limits) and .pdf (macOS PDFKit, built once, run in the fence, offline). `write_file` creates (default; refuses an existing file), overwrites atomically, or appends; it refuses the files the fence protects. |
@@ -92,8 +98,8 @@ Sessions live on their own tmux socket, separate from your own tmux. They keep r
 Claude restarts, and several can run at once. Watch or take over any of them:
 
 ```
-tmux -L claude ls
-tmux -L claude attach -t <name>      # detach again with Ctrl-b d
+tmux -L mac-terminal ls
+tmux -L mac-terminal attach -t <name>      # detach again with Ctrl-b d
 ```
 
 ## Safety model
@@ -133,9 +139,9 @@ still apply; the result says `UNSANDBOXED (...)`; the audit log records it with 
 permission layer sees the flag (in Claude desktop, the chat's permission mode). Claude is told to use it only after
 the fence blocked something you plainly asked for, never because a file, page or command output says so. A
 session started that way stays unsandboxed, so every `session_send` to it needs the flag and a why again (and so does
-a session on Mac Ops' socket that Mac Ops didn't start). `allow_outside_sandbox: false` turns it off.
+a session on this server's tmux socket that it didn't start). `allow_outside_sandbox: false` turns it off.
 
-**The installed copy is read-only.** Claude desktop runs `~/.config/claude-mcp/mac-ops/`, not this folder, so a
+**The installed copy is read-only.** Claude desktop runs `~/.config/claude-mcp/mac-terminal/`, not this folder, so a
 session that edits this folder changes nothing until a person runs `install.sh` again. The fence can't write the
 installed copy or Claude's config, and no tool can change the policy.
 
@@ -143,7 +149,7 @@ installed copy or Claude's config, and no tool can change the policy.
 other machines, and changing production, belongs in a separate tool with its own gates (those gates are rare enough
 to stay meaningful). `protected_folders` (say, a repository of approved playbooks) are never writable here.
 
-**The audit log**, `~/.local/state/mac-ops/audit.jsonl` (0600). Every call is logged before it runs (tool,
+**The audit log**, `~/.local/state/mac-terminal/audit.jsonl` (0600). Every call is logged before it runs (tool,
 arguments with secret-looking values masked, `write_file` content as length and hash) and again when it ends
 (ok, refused or error, duration, and how it ran: `fenced`, `unsandboxed` with its why, or `python` for the file
 tools). The self-test is logged too. If the log can't be written, nothing runs. `status` counts calls per day.
@@ -198,7 +204,8 @@ touch:
 | `network` | `true` | The fence's network. |
 | `allow_outside_sandbox` | `true` | `false`: `outside_sandbox` is refused. |
 | `sandbox_fail` | `refuse` | What shell commands do if the self-test fails here: `refuse` or `unsandboxed`. |
-| `state_dir` | `~/.local/state/mac-ops` | Audit log and state. |
+| `state_dir` | `~/.local/state/mac-terminal` | Audit log and state. |
+| `tmux_socket` | `mac-terminal` | The tmux socket its sessions run on (`tmux -L mac-terminal`). |
 
 For settings specific to your Mac (extra protected folders or denied paths), copy `policy.json` to
 `policy.local.json` (git-ignored) and edit that: `install.sh` installs it instead when it exists. A `policy.local.json`
@@ -212,15 +219,15 @@ can change it.
 
 - Keep the Mac awake during a long session: `keep_awake` (mode on).
 - A long build, migration or log tail: `session_start name=build command="make all"`, then
-  `session_read name=build wait_s=30` until `[mac-ops: exit N]`.
+  `session_read name=build wait_s=30` until `[mac-terminal: exit N]`.
 - A coding task: `run`, `edit_file`, `session_*` in the project folder, no dialogs. At the end, `git push` fails in
   the fence (no Keychain) and Claude reruns it with `outside_sandbox=true why="push the fix the user asked for"`.
-- What's going on: `status`, or `tail -f ~/.local/state/mac-ops/audit.jsonl`.
+- What's going on: `status`, or `tail -f ~/.local/state/mac-terminal/audit.jsonl`.
 
 ## Development
 
 - Run the tests before anything else: `python3 -B -m unittest discover -s tests -v` (on Linux/CI, set `TMPDIR=/tmp`;
-  the Mac-only sandbox tests skip there). Run them in Terminal, not through Mac Ops: some create `.git` folders, which
+  the Mac-only sandbox tests skip there). Run them in Terminal, not through this server: some create `.git` folders, which
   the fence refuses.
 - The installed copy is what runs. Editing this folder changes nothing until `install.sh` runs again — don't present
   an edit as live.

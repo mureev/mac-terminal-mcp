@@ -1,4 +1,4 @@
-"""Tests for mac_ops_server.py. Standard library only; they need tmux and git, and run on Linux or macOS:
+"""Tests for mac_terminal_mcp.py. Standard library only; they need tmux and git, and run on Linux or macOS:
 
     python3 -B -m unittest discover -s tests -v
 
@@ -21,18 +21,19 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-import mac_ops_server as M  # noqa: E402
+import mac_terminal_mcp as M  # noqa: E402
 
+SERVER_PY = os.path.join(ROOT, "mac_terminal_mcp.py")
 HAVE_TMUX = shutil.which("tmux") is not None
 ON_MAC = sys.platform == "darwin"
 
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="mac-ops-test-")
+        self.tmp = tempfile.mkdtemp(prefix="mac-terminal-test-")
         self.home = os.path.join(self.tmp, "home")
         os.makedirs(self.home)
-        self.socket = f"mac-ops-test-{os.getpid()}-{id(self) % 100000}"
+        self.socket = f"mac-terminal-test-{os.getpid()}-{id(self) % 100000}"
         self.protected = os.path.join(self.tmp, "protected")
         self.prof = os.path.join(self.tmp, "profile")
         sbx = os.path.join(self.tmp, "fake-sandbox-exec")
@@ -54,7 +55,7 @@ class Base(unittest.TestCase):
         self.policy_file = os.path.join(self.tmp, "policy.json")
         with open(self.policy_file, "w") as f:
             json.dump(pol, f)
-        os.environ["MAC_OPS_POLICY"] = self.policy_file
+        os.environ[f"{M.APP_ENV}_POLICY"] = self.policy_file
         M._P = None
 
     def policy_extra(self) -> dict:
@@ -102,7 +103,7 @@ class Base(unittest.TestCase):
 class Protocol(Base):
     def test_handshake_and_tools(self):
         r = M.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
-        self.assertEqual(r["result"]["serverInfo"]["name"], "mac-ops")
+        self.assertEqual(r["result"]["serverInfo"]["name"], "mac-terminal")
         self.assertEqual(r["result"]["protocolVersion"], "2025-06-18")
         names = [t["name"] for t in M.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
         self.assertEqual(sorted(names), sorted(["run", "session_start", "session_send", "session_read", "session_list",
@@ -124,17 +125,17 @@ class Protocol(Base):
         msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
                 {"jsonrpc": "2.0", "method": "notifications/initialized"},
                 {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}]
-        p = subprocess.run([sys.executable, "-I", "-B", os.path.join(ROOT, "mac_ops_server.py")],
+        p = subprocess.run([sys.executable, "-I", "-B", SERVER_PY],
                            input="\n".join(json.dumps(m) for m in msgs) + "\n", capture_output=True, text=True,
-                           env={**os.environ, "MAC_OPS_POLICY": self.policy_file}, timeout=20)
+                           env={**os.environ, f"{M.APP_ENV}_POLICY": self.policy_file}, timeout=20)
         lines = [json.loads(x) for x in p.stdout.splitlines()]
         self.assertEqual([x["id"] for x in lines], [1, 2])
 
     def test_bad_policy_key_stops_the_server(self):
         with open(self.policy_file, "w") as f:
             json.dump({"shel": ["/bin/sh", "-c"]}, f)
-        p = subprocess.run([sys.executable, "-I", "-B", os.path.join(ROOT, "mac_ops_server.py")], input="",
-                           capture_output=True, text=True, env={**os.environ, "MAC_OPS_POLICY": self.policy_file})
+        p = subprocess.run([sys.executable, "-I", "-B", SERVER_PY], input="",
+                           capture_output=True, text=True, env={**os.environ, f"{M.APP_ENV}_POLICY": self.policy_file})
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("unknown keys", p.stderr)
 
@@ -401,7 +402,7 @@ class Office(Base):
     def test_pdf(self):
         p = os.path.join(self.home, "r.pdf")
         with open(p, "wb") as f:
-            f.write(tiny_pdf("Hello from mac-ops"))
+            f.write(tiny_pdf("Hello from mac-terminal"))
         if not ON_MAC or not shutil.which("swiftc"):
             self.assertIn("PDFKit", self.refused("read_file", path=p))
             return
@@ -413,7 +414,7 @@ class Office(Base):
             t, err = self.call("read_file", path=p)
         self.assertFalse(err, t)
         self.assertIn("## Page 1", t)
-        self.assertIn("Hello from mac-ops", t)
+        self.assertIn("Hello from mac-terminal", t)
 
 
 @unittest.skipUnless(HAVE_TMUX, "needs tmux")
@@ -421,7 +422,7 @@ class Sessions(Base):
     def test_job_session(self):
         t = self.ok("session_start", name="job1", command="echo one; sleep 1; echo two; exit 3", wait_s=15)
         self.assertIn("two", t)
-        self.assertIn("[mac-ops: exit 3]", t)
+        self.assertIn("[mac-terminal: exit 3]", t)
         self.assertIn("job exited 3", t)
         self.assertIn("job1", self.ok("session_list"))
         self.assertIn("job exited 3", self.ok("session_read", name="job1", wait_s=10))   # no wait for a finished job
@@ -518,6 +519,104 @@ class PrivacyFallback(Base):
 
 
 # ----------------------------------------------------------------------------------------------- v0.7: no dialogs --
+class Name(Base):
+    """0.7: renamed from Mac Ops (mac-ops, MAC_OPS, tmux socket "claude")."""
+
+    def test_the_name_lives_in_constants(self):
+        self.assertEqual((M.APP, M.APP_TITLE, M.APP_ENV), ("mac-terminal", "Mac Terminal MCP", "MAC_TERMINAL"))
+        self.assertEqual(M.SERVER["name"], "mac-terminal")
+        P = M.load_policy(None)
+        self.assertEqual(P["tmux_socket"], "mac-terminal")
+        self.assertEqual(P["state_dir"], os.path.realpath(os.path.expanduser("~/.local/state/mac-terminal")))
+        self.assertIn(P["state_dir"], P["deny_paths"])
+        self.assertNotIn(os.path.realpath(os.path.expanduser("~/.local/state/mac-ops")), P["deny_paths"])
+        self.assertTrue(M.MARKER_RE.search("[mac-terminal: exit 7]"))
+        self.assertFalse(M.MARKER_RE.search("[mac-ops: exit 7]"))
+        with open(os.path.join(ROOT, "mac_terminal_mcp.py"), encoding="utf-8") as f:
+            code = f.read().split('"""', 2)[2]                          # below the module docstring
+        self.assertEqual(code.count("mac-terminal"), 1, "the name is spelled out once: APP")
+        self.assertEqual(code.count("Mac Terminal MCP"), 1, "and its title once: APP_TITLE")
+
+    @unittest.skipUnless(HAVE_TMUX, "needs tmux")
+    def test_commands_see_the_env_marker(self):
+        self.assertIn("marker=1", self.ok("run", command="echo marker=${MAC_TERMINAL:-none}"))
+
+
+class Installer(unittest.TestCase):
+    """install.sh against a scratch HOME, Claude config and install folder: the upgrade from Mac Ops."""
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="mac-terminal-inst-")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.home = os.path.join(self.t, "home")
+        self.dest = os.path.join(self.home, ".config", "claude-mcp")
+        self.cfg = os.path.join(self.t, "claude_desktop_config.json")
+        old = os.path.join(self.dest, "mac-ops")
+        os.makedirs(old)
+        for name in ("mac_ops_server.py", "policy.json"):
+            with open(os.path.join(old, name), "w") as f:
+                f.write("old\n")
+            os.chmod(os.path.join(old, name), 0o444)
+        self.old_state = os.path.join(self.home, ".local", "state", "mac-ops")
+        os.makedirs(self.old_state)
+        with open(os.path.join(self.old_state, "audit.jsonl"), "w") as f:
+            f.write("{}\n")
+        with open(self.cfg, "w") as f:
+            json.dump({"mcpServers": {"mac-ops": {"command": "/usr/bin/python3", "args": ["x"]},
+                                      "other": {"command": "keep-me"}}}, f)
+        self.env = {k: v for k, v in os.environ.items() if k not in ("MAC_TERMINAL", "MAC_OPS")}
+        self.env.update(HOME=self.home, MCP_DEST=self.dest, CLAUDE_CONFIG=self.cfg, SKIP_APP_CONTROL="1",
+                        TMPDIR=os.environ.get("TMPDIR", "/tmp"))
+
+    def sh(self, *args, env=None):
+        return subprocess.run(["/bin/bash", os.path.join(ROOT, "install.sh"), *args], capture_output=True, text=True,
+                              env=env or self.env, timeout=170)
+
+    def servers(self):
+        with open(self.cfg) as f:
+            return json.load(f)["mcpServers"]
+
+    @unittest.skipUnless(os.access("/usr/bin/python3", os.X_OK), "install.sh needs /usr/bin/python3")
+    def test_upgrade_from_mac_ops(self):
+        r = self.sh("--check")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('Old Mac Ops entry "mac-ops" in the Claude config', r.stdout)
+        self.assertIn("Old Mac Ops copy at", r.stdout)
+        self.assertIn(f"Old Mac Ops state (audit log): {self.old_state}", r.stdout)
+        self.assertEqual(sorted(self.servers()), ["mac-ops", "other"])         # --check changes nothing
+        self.assertTrue(os.path.isdir(os.path.join(self.dest, "mac-ops")))
+        r = self.sh("--skip-tests")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = r.stdout
+        s = self.servers()
+        self.assertEqual(sorted(s), ["mac-terminal", "other"])
+        self.assertEqual(s["other"], {"command": "keep-me"})
+        inst = os.path.join(self.dest, "mac-terminal")
+        self.assertEqual(s["mac-terminal"]["args"], ["-I", "-B", f"{inst}/mac_terminal_mcp.py"])
+        self.assertEqual(s["mac-terminal"]["env"], {"MAC_TERMINAL_POLICY": f"{inst}/policy.json"})
+        self.assertIn("the old \"mac-ops\" entry is gone", out)
+        self.assertFalse(os.path.exists(os.path.join(self.dest, "mac-ops")))
+        self.assertIn("Removed the old Mac Ops copy", out)
+        self.assertTrue(os.path.exists(os.path.join(self.old_state, "audit.jsonl")))     # the old log stays
+        self.assertIn(f"Kept the old Mac Ops state folder, with its audit log: {self.old_state}", out)
+        self.assertTrue(os.path.isfile(os.path.join(inst, "mac_terminal_mcp.py")))
+        r = self.sh("--check")
+        self.assertNotIn("Old Mac Ops entry", r.stdout)
+        self.assertNotIn("Old Mac Ops copy", r.stdout)
+        self.assertIn("mac-terminal entry present", r.stdout)
+        r = self.sh("--remove")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(sorted(self.servers()), ["other"])
+        self.assertFalse(os.path.exists(inst))
+
+    def test_refuses_to_install_from_a_command_it_runs(self):
+        for var in ("MAC_TERMINAL", "MAC_OPS"):
+            r = self.sh(env=dict(self.env, **{var: "1"}))
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("runs from your own Terminal", r.stderr)
+        self.assertEqual(sorted(self.servers()), ["mac-ops", "other"])
+
+
 class NoDialogs(Base):
     def test_no_dialog_or_grant_code_is_left(self):
         for name in ("show_dialog", "ask", "dialog_script", "tier1_dialog", "tier2_dialog", "grant_dialog",
@@ -525,7 +624,7 @@ class NoDialogs(Base):
                      "gate", "classify", "is_read_only", "tier2_label", "programs_run", "GRANTS", "ALLOWED",
                      "approvals_mode"):
             self.assertFalse(hasattr(M, name), name)
-        with open(os.path.join(ROOT, "mac_ops_server.py"), encoding="utf-8") as f:
+        with open(SERVER_PY, encoding="utf-8") as f:
             src = f.read()
         for s in ("display alert", "display dialog", "choose from list", "--preview-dialogs"):
             self.assertNotIn(s, src)
@@ -717,8 +816,8 @@ class Sockets(Base):
         os.makedirs(work)
         held, out = M.tmux_probe(lambda argv: M.via_tmux(argv, self.home, 15, merge=True)[:2], work, sock)
         self.assertFalse(held, out)
-        self.assertIn("mac-ops-tmux-reached-L", out)
-        self.assertIn("mac-ops-tmux-reached-sl", out)
+        self.assertIn("mac-terminal-tmux-reached-L", out)
+        self.assertIn("mac-terminal-tmux-reached-sl", out)
         self.assertEqual(os.listdir(work), [])                              # its links are gone
         refused = "tmux-L-rc=1\ntmux-sl-rc=1\ntmux-hl-rc=1\n"
         self.assertTrue(M.tmux_probe(lambda argv: (0, refused), work, sock)[0])
@@ -813,9 +912,9 @@ class OutsideSandboxOff(Base):
         self.ok("run", command="echo fenced-still-works")
 
     @unittest.skipUnless(HAVE_TMUX, "needs tmux")
-    def test_a_session_mac_ops_did_not_start_is_unsandboxed(self):
+    def test_a_session_it_did_not_start_is_unsandboxed(self):
         M.policy()
-        M.tmux("new-session", "-d", "-s", "manual")                     # e.g. the user's, on Mac Ops' socket
+        M.tmux("new-session", "-d", "-s", "manual")                     # e.g. the user's, on this server's socket
         t = self.refused("session_send", name="manual", text="echo x", outside_sandbox=True, why="the user asked")
         self.assertIn("runs outside the sandbox", t)
         self.assertIn("allow_outside_sandbox: false", t)
@@ -839,7 +938,7 @@ class ProtectedWrites(Base):
                 os.path.join(p, ".claude", "settings.json"), os.path.join(p, ".claude", "settings.local.json"),
                 os.path.join(self.home, ".claude.json"), os.path.join(self.protected, "playbook.yml"),
                 os.path.join(self.protected, "deep", "x.yml"), M.tmux_exe(),
-                os.path.join("/usr/local", f"mac-ops-test-{os.getpid()}")]
+                os.path.join("/usr/local", f"mac-terminal-test-{os.getpid()}")]
 
     def test_write_file_refuses_each_kind(self):
         for t in self.targets():
@@ -939,7 +1038,7 @@ class Status(Base):
         self.refused("run", command="sudo true")
         self.ok("session_start", name="st1")
         t = self.ok("status")
-        self.assertIn(f"mac-ops {M.VERSION}: no dialogs", t)
+        self.assertIn(f"Mac Terminal MCP {M.VERSION} (mac-terminal): no dialogs", t)
         self.assertIn("fence: working", t)
         self.assertIn("network: on", t)
         self.assertIn(f"protected folders: {os.path.realpath(self.protected)}", t)
@@ -1011,7 +1110,7 @@ class MacSandbox(Base):
             self.skipTest(f"sandbox self-test failed here: {st['reason']}")
 
     def probe(self):
-        p = os.path.join(os.path.expanduser("~"), f".mac-ops-test-probe-{os.getpid()}")
+        p = os.path.join(os.path.expanduser("~"), f".mac-terminal-test-probe-{os.getpid()}")
         self.addCleanup(lambda: os.path.exists(p) and os.remove(p))
         return p
 

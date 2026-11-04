@@ -1,6 +1,6 @@
 # Design decisions
 
-The reasoning behind Mac Ops, oldest first. The changelog says *what* changed; this says *why*.
+The reasoning behind Mac Terminal MCP (Mac Ops until 0.7), oldest first. The changelog says *what* changed; this says *why*.
 
 **Build rather than install (2026-10-31).** Desktop Commander does the job functionally, but its guardrails don't
 hold, it reports home by default, and it brings 650 npm packages onto a laptop that holds production credentials
@@ -61,3 +61,9 @@ tmux above all, also the ssh-agent and container runtimes) is a way out of the f
 to it, so the fence denies those connections, and the self-test must prove the tmux one before the fence is used.
 Gates stay where they are rare and high-stakes: production changes live in a separate tool, whose few
 approvals still mean something.
+
+**A name people search for (v0.7, 2026-11-04).** "Mac Ops" read as Mac fleet management (Google's macops is exactly
+that), and nobody looking for this types "ops". People look for a terminal, for their Mac, and for MCP, so the name
+is all three: Mac Terminal MCP, `mac-terminal-mcp`. Claude and Cowork stay in the description, not the name: the
+server speaks plain MCP, and a product name in it would say otherwise. The tmux socket moved from the generic
+`claude`, which another tool could also pick, to `mac-terminal`.

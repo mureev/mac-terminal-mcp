@@ -1,8 +1,16 @@
 # Changelog
 
-## 0.7.0 — 2026-11-04 — no dialogs
+## 0.7.0 — 2026-11-04 — no dialogs; renamed from Mac Ops
 
-The approval system is gone; the macOS sandbox carries the weight (design-decisions: "No dialogs").
+The approval system is gone; the macOS sandbox carries the weight (design-decisions: "No dialogs"). And a new name:
+Mac Terminal MCP, renamed from Mac Ops (design-decisions: "A name people search for").
+
+- **Renamed from Mac Ops.** Repository `mac-terminal-mcp`; MCP server key `mac-terminal` (was `mac-ops`); server file
+  `mac_terminal_mcp.py` (was `mac_ops_server.py`); installed copy `~/.config/claude-mcp/mac-terminal/`; state
+  `~/.local/state/mac-terminal/`; tmux socket `mac-terminal` (was `claude`); job marker `[mac-terminal: exit N]`;
+  `MAC_TERMINAL_POLICY` and `MAC_TERMINAL=1` (were `MAC_OPS_*`). `install.sh` upgrades: it replaces the `mac-ops` entry,
+  removes the old read-only copy, keeps the old state folder and says where it is; `--check` reports an old install.
+  An old policy still loads; keep `~/.local/state/mac-ops` in your local `deny_paths` while the old audit log is there.
 
 - **No dialogs, tiers or grants.** Removed: the macOS alerts, `request_grant`/`revoke_grant` and grant tokens, the
   read-only classifier (tier 0), the always-ask lists (tier 2), the allow-repeat window, grant hints, approvals
@@ -30,7 +38,8 @@ The approval system is gone; the macOS sandbox carries the weight (design-decisi
   `plugins` and `~/.claude.json`. 0.6's dialog and grant keys are ignored and listed by `status`, and a 0.6 policy's
   protected and denied lists gain 0.7's additions. The server runs `ps` and `pgrep` by absolute path.
 - **Audit log:** each call's end records `how`: `fenced`, `unsandboxed` (with its why) or `python`.
-- `install.sh` refuses to install from a command Mac Ops runs (`MAC_OPS` set; `--check` still works).
+- `install.sh` refuses to install from a command this server (or Mac Ops) runs (`MAC_TERMINAL` or `MAC_OPS` set;
+  `--check` still works).
 - `tests/fence_probe.py` replaces the 0.3.2 sandbox-runtime experiment (it compared read and grant profiles that no
   longer exist; it and `srt-0.0.81-profiles.json` are in the 0.6.0 history). `tests/policy-0.6.0.json`: the 0.6 policy,
   to test that it still loads.
