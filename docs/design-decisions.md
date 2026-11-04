@@ -56,5 +56,8 @@ commands run without prompts; the rest falls back to the permission flow). Two c
 without the grant": writes are limited to the home folder and temp, because once writes are free, a writable
 Homebrew or `/Applications` lets a fenced command replace a program that something unsandboxed runs later (this
 server's own tmux among them); and Claude Code's settings, hooks and plugins joined the protected files for the same
-reason. Gates stay where they are rare and high-stakes: production changes live in a separate tool, whose few
+reason. The same rule covers sockets: a server that runs unsandboxed and does what a client asks (this server's
+tmux above all, also the ssh-agent and container runtimes) is a way out of the fence if a fenced command can connect
+to it, so the fence denies those connections, and the self-test must prove the tmux one before the fence is used.
+Gates stay where they are rare and high-stakes: production changes live in a separate tool, whose few
 approvals still mean something.

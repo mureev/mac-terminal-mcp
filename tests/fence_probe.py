@@ -41,7 +41,8 @@ def main():
     st = M._selftest()
     print(f"mac-ops {M.VERSION}, policy {P['_path']}: self-test", "PASS" if st["ok"] else "FAIL " + st["reason"],
           "| extras:", st["extras"])
-    prof = M.sb_profile(extras=st["extras"] if st["ok"] else [])
+    prof = M.sb_profile(extras=st["extras"] if st["ok"] else [], sockets=tuple(st.get("sockets") or M.SOCKET_FORMS[0]),
+                        path_dirs=st.get("path_dirs", []))
     H, tag = M.home(), f"{os.getpid()}-{os.urandom(3).hex()}"
     repo = os.path.realpath(P["state_dir"]) + f"-probe-{tag}"
     junk = [os.path.join(H, f".mac-ops-probe-{tag}"), f"/Users/Shared/.mac-ops-probe-{tag}",
@@ -51,7 +52,7 @@ def main():
     r = {}
 
     def run(argv, cwd=H, timeout=25):
-        rc, out, _, _ = M.via_tmux([P["sandbox_exec"], "-f", M.sb_file(prof)] + argv, cwd, timeout, merge=True)
+        rc, out, _, _ = M.via_tmux(M.fence_argv(prof) + argv, cwd, timeout, merge=True)
         return rc, out
 
     def sh(script, cwd=H):
@@ -105,6 +106,15 @@ def main():
         rc, out = run([sys.executable, "-I", "-c", conn])
         r[f"network {'connects' if P['network'] else 'refused'} (policy network: {P['network']})"] = (
             ("CONNECTED" if P["network"] else "BLOCKED") in out)
+        _, so, _, _ = M.via_tmux([tmux, "-L", P["tmux_socket"], "list-sessions", "-F", "#{socket_path}"], H, 10,
+                                 merge=True)
+        sock = next((x.strip() for x in so.splitlines() if x.strip().startswith("/")), "")
+        if sock:
+            r["this server's tmux unreachable (name, symlink, hard link)"] = M.tmux_probe(run, repo, sock)[0]
+        if os.environ.get("SSH_AUTH_SOCK"):
+            rc, out = run(["/bin/sh", "-c", f"SSH_AUTH_SOCK={q(os.environ['SSH_AUTH_SOCK'])} /usr/bin/ssh-add -l "
+                                            ">/dev/null 2>&1; echo agent-rc=$?"])
+            r["ssh-agent unreachable"] = "agent-rc=0" not in out and "agent-rc=1" not in out
         rc, out = sh("for p in osascript open security defaults pbpaste launchctl; do command -v $p >/dev/null && "
                      "$(command -v $p) >/dev/null 2>&1; echo $p-rc=$?; done")
         for p in ("osascript", "open", "security", "defaults", "pbpaste", "launchctl"):

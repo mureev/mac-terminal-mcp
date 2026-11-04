@@ -87,7 +87,7 @@ DEFAULT_POLICY = {
     "deny_paths": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.kube", "~/.docker/config.json", "~/.netrc",
                    "~/Library/Keychains", "~/Library/Application Support/Claude", "~/.config/claude-mcp",
                    "~/.local/state/mac-ops", "~/.git-credentials", "~/.pypirc", "~/.vault-token", "~/.pgpass",
-                   "~/.my.cnf"],
+                   "~/.my.cnf", "~/.config/gh"],
     # Folders whose contents are someone's sign-off (approved playbooks, release configs) or that another, stricter
     # tool owns: unwritable in the fence, refused by write_file and edit_file.
     "protected_folders": [],
@@ -107,7 +107,10 @@ DEFAULT_POLICY = {
     # (0.6 called them always_ask_paths; an older policy's list is read as this one.)
     "protected_paths": ["~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.zlogin", "~/.zlogout", "~/.bashrc",
                         "~/.bash_profile", "~/.profile", "~/.gitconfig", "~/.config/git", "~/Library/LaunchAgents",
-                        "/Library/LaunchAgents", "/Library/LaunchDaemons", "~/Applications", "~/.local/bin", "~/bin"],
+                        "/Library/LaunchAgents", "/Library/LaunchDaemons", "~/Applications", "~/.local/bin", "~/bin",
+                        # v0.7: what shell startup files commonly load, and configs that name programs to run
+                        "~/.oh-my-zsh", "~/.zsh", "~/.config/zsh", "~/.p10k.zsh", "~/.config/fish", "~/.npmrc",
+                        "~/.docker/cli-plugins"],
     # Never writable, anywhere (regex over the path; Seatbelt and Python). v0.3.2, from sandbox-runtime's list: a .git
     # folder itself (renaming it away and back put hooks past the hooks rule), .gitmodules, editor tasks (.vscode,
     # .idea), project MCP servers (.mcp.json), Claude Code commands/agents. v0.7: Claude Code's settings, hooks,
@@ -149,7 +152,8 @@ INSTRUCTIONS = (
     "write_file. Both refuse the files the fence protects. read_file also reads .docx, .xlsx, .pptx and .pdf.\n"
     "- run: short commands (up to 45 s, no stdin). Anything longer, interactive or meant to keep running: "
     "session_start (tmux), then session_read with wait_s/until. Several sessions can run at once; the user can watch any "
-    "of them with `tmux -L claude attach -t <name>`. A session keeps the sandbox it started with.\n"
+    "of them with `tmux -L claude attach -t <name>`. A session keeps the sandbox it started with; typing into an "
+    "unsandboxed one needs outside_sandbox=true and a why on every session_send.\n"
     "- Remote hosts are not reachable from here (ssh, scp, ansible are denied). Never work around that from this "
     "shell.\n"
     "- A refusal by the deny lists (sudo, Keychain reads, ssh, ansible, secret folders) is final, with outside_sandbox "
@@ -192,9 +196,9 @@ def load_policy(path: str | None) -> dict:
             legacy.insert(0, "ignored: " + ", ".join(old))
         p.update({k: v for k, v in given.items() if k in DEFAULT_POLICY})
         if legacy:                                      # a 0.6 copy: its lists lack what 0.7 protects, so add it
-            for k in ("protected_paths", "protected_writes"):
+            for k in ("deny_paths", "protected_paths", "protected_writes"):
                 p[k] = list(p[k]) + [x for x in DEFAULT_POLICY[k] if x not in p[k]]
-            legacy.append("protected_paths and protected_writes include 0.7's defaults")
+            legacy.append("deny_paths, protected_paths and protected_writes include 0.7's defaults")
     if p["sandbox_fail"] not in ("refuse", "unsandboxed"):
         raise SystemExit(f"policy {path}: sandbox_fail must be refuse or unsandboxed")
     for k in ("network", "allow_outside_sandbox", "sandbox_selftest"):
@@ -388,15 +392,86 @@ def tmux_paths() -> list:
     return sorted({t, os.path.realpath(t)})
 
 
+def tmux_socket_dirs() -> list:
+    """Where tmux servers listen: tmux-<uid> under TMUX_TMPDIR or /tmp, as spelled and resolved (/tmp is /private/tmp
+    on a Mac). This server's tmux and the user's own run unsandboxed and run whatever a connected client asks for
+    (run-shell, new-window), so no fenced command may connect there, or write there."""
+    base = os.path.normpath(os.environ.get("TMUX_TMPDIR") or "/tmp")
+    sub = f"tmux-{os.getuid()}"
+    out = {os.path.join(base, sub), os.path.join(os.path.realpath(base), sub)}
+    for p in list(out):
+        if p.startswith("/private/tmp/"):
+            out.add(p[len("/private"):])
+        elif p.startswith("/tmp/"):
+            out.add("/private" + p)
+    return sorted(out)
+
+
+def writable_path_dirs(path_value: str) -> list:
+    """The folders of a PATH that the fence could otherwise write (inside fence_writable or temp, but not a root
+    itself): programs there run later outside the sandbox, from an outside_sandbox command or the user's Terminal."""
+    roots = policy()["fence_writable"] + temp_dirs()
+    out = []
+    for d in path_value.split(":"):
+        if not d or not os.path.isabs(d):
+            continue
+        r = os.path.realpath(d)
+        if any(fold(r) == fold(x) for x in roots) or r in out:
+            continue                                    # a PATH holding the home folder itself can't be protected
+        if any(under_ci(r, x) for x in roots):
+            out.append(r)
+    return out
+
+
+# Unix sockets of unsandboxed programs that run commands, or lend credentials, for whoever connects: no fenced command
+# may connect (v0.7). Regexes over the socket's path, without quotes or backslashes; any letter case in the profile.
+AGENT_SOCKETS = (r"^/private/tmp/com[.]apple[.]launchd[.][^/]+/Listeners$",       # ssh-agent (SSH_AUTH_SOCK)
+                 # container runtimes: their VM mounts the home folder, so one `docker run -v` writes anything there
+                 r"/docker[.]sock$", r"/[.]colima/", r"/[.]orbstack/run/", r"/podman/[^/]*[.]sock$",
+                 r"/emacs[0-9]+/", r"/nvim[.][^/]+/", r"/vscode-ipc-[^/]+[.]sock$",  # editors that run what they get
+                 r"/[.]screen/", r"/screens/S-[^/]+/")                                 # GNU screen sessions
+SOCKET_LITERALS = ("/var/run/docker.sock", "/private/var/run/docker.sock", "~/.docker/run/docker.sock",
+                   "~/.colima/default/docker.sock", "~/.orbstack/run/docker.sock")
+# The forms Seatbelt has used for a unix-socket rule, newest first, each with and without a file-link deny on tmux's
+# folders. The self-test keeps the first this Mac takes and honours (proven against the live tmux server); none: off.
+SOCKET_FORMS = (("unix-socket", True), ("unix-socket", False), ("regex", True), ("regex", False), ("literal", True),
+                ("literal", False))
+
+
+def socket_rules(form: str, link: bool) -> list:
+    """The fence's unix-socket denials in one form: tmux's socket folders, the agent sockets, SSH_AUTH_SOCK, and the
+    denied paths and state folder (a socket in ~/.gnupg is a credential too)."""
+    P = policy()
+    dirs = tmux_socket_dirs()
+    ssh = os.environ.get("SSH_AUTH_SOCK") or ""
+    ssh = sorted({ssh, os.path.realpath(ssh)}) if os.path.isabs(ssh) else []
+    if form == "literal":
+        paths = ([os.path.join(d, n) for d in dirs for n in sorted({P["tmux_socket"], "default"})] + ssh +
+                 [os.path.realpath(os.path.expanduser(x)) for x in SOCKET_LITERALS])
+        out = [f"(deny network-outbound (literal {sbq(x)}))" for x in sorted(set(paths))]
+    else:
+        rxs = ([r + "(/|$)" for r in map(ci_path_rx, dirs + P["deny_paths"] + [P["state_dir"]]) if r] +
+               [r + "$" for r in map(ci_path_rx, ssh) if r] + [ci_rx(r) for r in AGENT_SOCKETS])
+        rule = ('(deny network-outbound (remote unix-socket (path-regex #"{}")))' if form == "unix-socket" else
+                '(deny network-outbound (regex #"{}"))')
+        out = [rule.format(r) for r in rxs]
+    if link:
+        out.append("(deny file-link " + " ".join(f'(regex #"{r}(/|$)")' for r in map(ci_path_rx, dirs) if r) + ")")
+    return out
+
+
 def protected_write(path: str):
     """Why the fence never lets a command change path, and so write_file and edit_file refuse it; None if it may."""
     P = policy()
     for d in P["deny_paths"] + [P["state_dir"]]:
         if under_ci(path, d):
             return f"it is under {tilde(d)}, a denied path"
-    for d in P["protected_paths"] + tmux_paths():
+    for d in P["protected_paths"] + tmux_paths() + tmux_socket_dirs():
         if under_ci(path, d):
             return f"it is under {tilde(d)}, which runs later outside the sandbox (policy protected_paths)"
+    for d in sandbox_status().get("path_dirs", []):
+        if under_ci(path, d):
+            return f"it is under {tilde(d)}, a folder on the login PATH: programs there run later outside the sandbox"
     for rx in P["_protected_writes"]:
         if rx.search(path):
             return ("it is a file that runs later outside the sandbox (git hooks or config, .envrc, editor tasks, MCP "
@@ -473,15 +548,24 @@ def sb_paths(paths: list, tail: str = "(/|$)") -> list:
     return out
 
 
-def sb_profile(extras=None, roots=None, more_deny=(), more_protected=(), network=None) -> str:
+def sb_profile(extras=None, roots=None, more_deny=(), more_protected=(), network=None, sockets=None,
+               path_dirs=None) -> str:
     """The fence. Writes only under fence_writable and temp, and never to denied or protected paths, protected folders,
-    the tmux program, the state folder or a protected_writes match; denied paths unreadable, the state folder's
-    contents too; network as the policy says; the exec guard and the extra guards this Mac took. roots, more_deny,
-    more_protected: the self-test's scratch stand-ins for the policy's paths. network: False for reading PDFs."""
+    the tmux program and tmux's socket folders, the login PATH's folders in home, the state folder or a
+    protected_writes match; denied paths unreadable, the state folder's contents too; network as the policy says; no
+    connections to tmux's or an agent's unix socket; the exec guard and the extra guards this Mac took. extras,
+    sockets (a SOCKET_FORMS entry, or False for none) and path_dirs default to what the self-test found; roots,
+    more_deny, more_protected: its scratch stand-ins for the policy's paths. network: False for reading PDFs."""
     P = policy()
+    if extras is None or sockets is None or path_dirs is None:
+        st = sandbox_status()
+        extras = st["extras"] if extras is None else extras
+        sockets = tuple(st.get("sockets") or SOCKET_FORMS[0]) if sockets is None else sockets
+        path_dirs = st.get("path_dirs", []) if path_dirs is None else path_dirs
     writable = list(P["fence_writable"] if roots is None else roots) + temp_dirs()
     denied = sorted(set(P["deny_paths"] + [P["state_dir"]] + list(more_deny)))
-    protected = sorted(set(P["protected_paths"] + P["protected_folders"] + tmux_paths() + list(more_protected)))
+    protected = sorted(set(P["protected_paths"] + P["protected_folders"] + tmux_paths() + tmux_socket_dirs() +
+                           list(path_dirs) + list(more_protected)))
     out = ["(version 1)", "(allow default)"]
     if not (P["network"] if network is None else network):
         out.append("(deny network*)")
@@ -497,7 +581,9 @@ def sb_profile(extras=None, roots=None, more_deny=(), more_protected=(), network
     # it can't stat is invalid and prints nothing, exit 0), so its metadata stays readable; its contents don't.
     out.append("(deny file-read-data " + " ".join(sb_paths([P["state_dir"]])) + ")")
     out.append("(deny process-exec " + " ".join(sb_paths(list(EXEC_GUARD), "$")) + ")")
-    for name in (sandbox_status()["extras"] if extras is None else extras):
+    if sockets:
+        out += socket_rules(*sockets)
+    for name in extras:
         out.append(SB_EXTRAS[name])                 # the Keychain stays closed: git/gh over https need outside_sandbox
     return "\n".join(out) + "\n"
 
@@ -515,10 +601,44 @@ def sb_file(profile: str) -> str:
     return p
 
 
+# Fenced commands start without the variables that point at an unsandboxed server: their tmux, and the ssh-agent
+# (the socket rules are what holds; this keeps honest programs from trying).
+FENCE_UNSET = ("TMUX", "TMUX_PANE", "SSH_AUTH_SOCK")
+
+
+def fence_argv(profile: str) -> list:
+    return (["/usr/bin/env"] + [x for v in FENCE_UNSET for x in ("-u", v)] +
+            [policy()["sandbox_exec"], "-f", sb_file(profile)])
+
+
 def sb_argv(route) -> list:
     if route is None or route.mode != "fenced":
         return []
-    return [policy()["sandbox_exec"], "-f", sb_file(sb_profile())]
+    return fence_argv(sb_profile())
+
+
+def tmux_probe(run_fenced, work: str, sockpath: str) -> tuple:
+    """From inside the fence, try to reach this server's tmux (unsandboxed, so whatever it runs is too): by its name
+    (-L), and through a symlink and a hard link to its socket in a writable folder. -> (refused all three ways, with a
+    printed marker for each; the output). run_fenced(argv) -> (rc, output)."""
+    T, S, q = tmux_exe(), policy()["tmux_socket"], shlex.quote
+    sl, hl = os.path.join(work, "tmux-sl"), os.path.join(work, "tmux-hl")
+    script = (f"rm -f {q(sl)} {q(hl)}; "
+              f"{q(T)} -L {q(S)} list-sessions -F mac-ops-tmux-reached-L 2>/dev/null; echo tmux-L-rc=$?; "
+              f"ln -s {q(sockpath)} {q(sl)} 2>/dev/null; "
+              f"{q(T)} -S {q(sl)} list-sessions -F mac-ops-tmux-reached-sl 2>/dev/null; echo tmux-sl-rc=$?; "
+              f"ln {q(sockpath)} {q(hl)} 2>/dev/null; "
+              f"{q(T)} -S {q(hl)} list-sessions -F mac-ops-tmux-reached-hl 2>/dev/null; echo tmux-hl-rc=$?")
+    _, out = run_fenced(["/bin/sh", "-c", script])
+    ways = ("L", "sl", "hl")
+    held = (all(re.search(rf"^tmux-{w}-rc=[1-9][0-9]*$", out, re.M) for w in ways) and
+            "mac-ops-tmux-reached" not in out)
+    for p in (sl, hl):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return held, out
 
 
 def _selftest() -> dict:
@@ -526,7 +646,9 @@ def _selftest() -> dict:
     program output comes back; it writes its folders and temp, but not outside them, not the state folder, not .git
     hooks, not a protected path (also spelled in another letter case), and can't rename .git; it can't read a denied
     folder or the state folder's contents (also in another letter case); open and osascript can't start; the network
-    follows the policy. Every check needs positive evidence (a marker the sandboxed program printed, or a file on
+    follows the policy; and this server's tmux, which runs unsandboxed, can't be reached from inside, by its name or
+    through a symlink or a hard link to its socket, while it answers the same command from outside (v0.7: the
+    unix-socket rule is core; the first form this Mac takes and honours is kept). Every check needs positive evidence (a marker the sandboxed program printed, or a file on
     disk), never just a missing output. The probes run the fence's own rules with scratch stand-ins for the policy's
     folders (roots, protected and denied paths), so nothing real is touched. Any failure: the fence is off, and
     fenced calls follow sandbox_fail."""
@@ -534,7 +656,8 @@ def _selftest() -> dict:
     st = {"ok": False, "reason": "", "extras": [], "at": now_iso(), "checks": []}
     sbx = P["sandbox_exec"]
     if not P["sandbox_selftest"]:
-        st.update(ok=True, reason="self-test off in the policy (tests only)", extras=list(SB_EXTRAS))
+        st.update(ok=True, reason="self-test off in the policy (tests only)", extras=list(SB_EXTRAS),
+                  sockets=list(SOCKET_FORMS[0]), path_dirs=[])
         return st
     if not (os.path.isabs(sbx) and os.access(sbx, os.X_OK)):
         st["reason"] = f"no {sbx} (macOS only)"
@@ -559,7 +682,7 @@ def _selftest() -> dict:
         f = sb_file(profile)
         if scratch in profile and f not in made:
             made.append(f)
-        rc, out, _, _ = via_tmux([sbx, "-f", f] + argv, home(), timeout, merge=True)
+        rc, out, _, _ = via_tmux(fence_argv(profile) + argv, home(), timeout, merge=True)
         return rc, out
 
     def fail(why):
@@ -580,13 +703,18 @@ def _selftest() -> dict:
             f.write("mac-ops-secret-7f3\n")
         with open(os.path.join(deny, "k"), "w", encoding="utf-8") as f:
             f.write("mac-ops-secret-7f3\n")
-        fence = sb_profile(extras=[])
-        probe = sb_profile(extras=[], roots=[work], more_deny=[deny], more_protected=[prot])
-        basic = list(P["shell"]) + ["echo mac-ops-ok; git --version >/dev/null 2>&1 && echo git-ok"]
+        fence = sb_profile(extras=[], sockets=False, path_dirs=[])
+        probe = sb_profile(extras=[], roots=[work], more_deny=[deny], more_protected=[prot], sockets=False,
+                           path_dirs=[])
+        basic = list(P["shell"]) + ["echo mac-ops-ok; git --version >/dev/null 2>&1 && echo git-ok; "
+                                    "printf 'mac-ops-path=%s\\n' \"$PATH\""]
         rc, out = sb(fence, basic)
         if "mac-ops-ok" not in out:
             return fail(f"a shell does not start inside the sandbox (rc {rc}): {out.strip()[-300:]}")
         want_git = "git-ok" in out
+        m = re.search(r"^mac-ops-path=(.*)$", out, re.M)
+        pdirs = writable_path_dirs((m.group(1) if m else "") + ":" + env()["PATH"])
+        st["path_dirs"] = pdirs
         rc, out = sb(fence, [sys.executable, "-I", "-c", "print('mac-ops-' + 'py')"])
         if "mac-ops-py" not in out:
             return fail(f"a program's output does not come back from the sandbox (rc {rc}): {out.strip()[-300:]}")
@@ -661,9 +789,39 @@ def _selftest() -> dict:
         if "osa-rc=126" not in out or "open-rc=126" not in out:
             return fail(f"the sandbox did not refuse to start open and osascript: {out.strip()[-200:]}")
         st["checks"].append("open/osascript refused")
+        T = tmux_exe()
+        _, ctl, _, _ = via_tmux([T, "-L", P["tmux_socket"], "list-sessions", "-F", "#{socket_path}"], home(), 15,
+                                merge=True)
+        sockpath = next((x.strip() for x in ctl.splitlines() if x.strip().startswith("/")), "")
+        if not sockpath:
+            return fail(f"tmux check inconclusive (its socket path did not come back unsandboxed): {ctl[-200:]}")
+        _, ctl, _, _ = via_tmux([T, "-L", P["tmux_socket"], "list-sessions", "-F", "mac-ops-tmux-reached"], home(), 15,
+                                merge=True)
+        if "mac-ops-tmux-reached" not in ctl:
+            return fail(f"tmux check inconclusive (the unsandboxed client could not reach it either): {ctl[-200:]}")
+        sockets, tried = None, []
+        for form in SOCKET_FORMS:
+            prof = sb_profile(extras=[], roots=[work], more_deny=[deny], more_protected=[prot], sockets=form,
+                              path_dirs=pdirs)
+            rc, out = sb(prof, basic)
+            if "mac-ops-ok" not in out:
+                tried.append(f"{form[0]}{'+link' if form[1] else ''}: not taken")
+                continue
+            held, out = tmux_probe(lambda argv: sb(prof, argv), work, sockpath)
+            if held:
+                sockets = form
+                break
+            tried.append(f"{form[0]}{'+link' if form[1] else ''}: reached it ({out.strip()[-120:]})")
+        if sockets is None:
+            return fail("the sandbox did not stop a fenced command from reaching this server's tmux, which runs "
+                        "unsandboxed: " + "; ".join(tried))
+        st["sockets"] = list(sockets)
+        st["checks"].append(f"tmux unreachable by name, symlink and hard link ({sockets[0]} rule"
+                            f"{', file-link denied' if sockets[1] else ''}); {len(pdirs)} PATH folders in home "
+                            "protected")
         sleeper = subprocess.Popen(["/bin/sleep", "60"], stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL)
         for name in SB_EXTRAS:
-            prof = sb_profile(extras=[name])
+            prof = sb_profile(extras=[name], sockets=sockets, path_dirs=pdirs)
             rc, out = sb(prof, basic)
             if not ("mac-ops-ok" in out and ("git-ok" in out) == want_git):
                 continue
@@ -674,7 +832,8 @@ def _selftest() -> dict:
                     continue
             st["extras"].append(name)
         if st["extras"]:                                # all of them together, as real calls get them
-            rc, out = sb(sb_profile(extras=st["extras"]), [sys.executable, "-I", "-c", "print('mac-ops-' + 'py')"])
+            rc, out = sb(sb_profile(extras=st["extras"], sockets=sockets, path_dirs=pdirs),
+                         [sys.executable, "-I", "-c", "print('mac-ops-' + 'py')"])
             if "mac-ops-py" not in out:
                 st["extras"] = []
                 st["checks"].append("extra guards dropped: together they broke program output")
@@ -1163,10 +1322,25 @@ def t_session_send(a: dict) -> str:
     until = until_arg(a)
     if text is not None:
         deny_check(text)
-    # What typing here can do is bounded by the session's own sandbox, fixed when it started.
+    # What typing here can do is bounded by the session's own sandbox, fixed when it started. Into an unsandboxed
+    # session (outside_sandbox, or one Mac Ops didn't start) every call says so again, with its own why (v0.7).
     mode = session_mode(name)
-    _CALL["how"] = mode
-    _CALL["why"] = "" if mode == "fenced" else "typed into a session that runs outside the sandbox"
+    outside = b_arg(a, "outside_sandbox", False)
+    why = (s_arg(a, "why", maxlen=300) or "").strip()
+    if mode == "unsandboxed":
+        if not policy()["allow_outside_sandbox"]:
+            raise Refused(f"session {name} runs outside the sandbox, and outside_sandbox is off on this Mac (policy "
+                          "allow_outside_sandbox: false): nothing was typed. Tell the user what to type there.")
+        if not (outside and why):
+            raise Refused(f"session {name} runs outside the sandbox (started with outside_sandbox, or not by Mac Ops): "
+                          "whatever is typed there runs as the user with no sandbox, so every session_send to it needs "
+                          "outside_sandbox=true and why (what the user asked for). Nothing was typed.")
+        _routed(Route("unsandboxed", "outside_sandbox: " + why))
+    elif outside:
+        raise Refused(f"session {name} runs in the fence: what is typed there can't leave it, so outside_sandbox does "
+                      "nothing here. Drop it, or start a new session with outside_sandbox=true. Nothing was typed.")
+    else:
+        _routed(Route("fenced"))
     wait_s = max(0, min(wait_s, remaining() - 4))
     base = baseline(name)
     if text is not None:
@@ -1200,7 +1374,7 @@ def t_session_list(a: dict) -> str:
         name, created, _ = (ln.split("\t") + ["", ""])[:3]
         if name.startswith(X_PREFIX):                   # a run or a read in flight, not a session
             continue
-        out.append(f"  {name}  started {created}  {session_state(name)}")
+        out.append(f"  {name} ({session_mode(name)})  started {created}  {session_state(name)}")
     return "\n".join(out)
 
 
@@ -1677,7 +1851,7 @@ def _is_caffeinate(pid) -> bool:
         os.waitpid(int(pid), os.WNOHANG)               # reap it if it was ours and has exited
     except (ChildProcessError, OSError):
         pass
-    r = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], stdout=PIPE, stderr=DEVNULL)
+    r = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "comm="], stdout=PIPE, stderr=DEVNULL)
     return r.returncode == 0 and r.stdout.decode().strip().endswith("caffeinate")
 
 
@@ -1703,7 +1877,7 @@ def t_keep_awake(a: dict) -> str:
     if not os.access(exe, os.X_OK):
         raise Refused("no /usr/bin/caffeinate (macOS only)")
     hours = n_arg(a, "hours", 0, 0, 24)
-    r = subprocess.run(["pgrep", "-x", "Claude"], stdout=PIPE, stderr=DEVNULL)
+    r = subprocess.run(["/usr/bin/pgrep", "-x", "Claude"], stdout=PIPE, stderr=DEVNULL)
     pids = r.stdout.decode().split()
     claude_pid = int(pids[0]) if pids else None
     argv = [exe, "-dims"]
@@ -1850,10 +2024,11 @@ TOOLS = {
                           "lines": LINES, "why": WHY, "outside_sandbox": OUTSIDE}, ["name"]), EXEC),
     "session_send": (t_session_send, "Type text into a session (Enter after it unless enter=false) and/or press "
                                      "one key (C-c to interrupt), then wait for the output. It runs in the sandbox the "
-                                     "session started with.",
+                                     "session started with. Into an unsandboxed session (session_list marks them) "
+                                     "every call needs outside_sandbox=true and its own honest why.",
                      _o({"name": NAME, "text": {"type": "string"}, "key": {"type": "string", "enum": list(KEYS)},
-                         "enter": {"type": "boolean"}, "wait_s": WAIT, "until": UNTIL, "lines": LINES, "why": WHY},
-                        ["name"]), EXEC),
+                         "enter": {"type": "boolean"}, "wait_s": WAIT, "until": UNTIL, "lines": LINES, "why": WHY,
+                         "outside_sandbox": OUTSIDE}, ["name"]), EXEC),
     "session_read": (t_session_read, "Read a session's last lines; optionally wait for new output first.",
                      _o({"name": NAME, "lines": LINES, "wait_s": WAIT, "until": UNTIL}, ["name"]), READ),
     "session_list": (t_session_list, "List the sessions and what each is doing.", _o({}), READ),

@@ -80,8 +80,8 @@ the server's own Python never needs Full Disk Access.
 |---|---|
 | `run` | One shell command (zsh login shell, as you, no stdin, up to 45 s), in the fence. Output and exit code. `outside_sandbox=true` + `why`: no sandbox. |
 | `session_start` | A tmux session, in the fence (or `outside_sandbox`). With `command`, a job: it runs once, prints `[mac-ops: exit N]`, and leaves a shell open. Without, an interactive shell. |
-| `session_send` | Type into a session (and/or press `C-c`, `Enter`, ...), then wait for output (`wait_s`, `until` regex). It runs in the sandbox the session started with. |
-| `session_read`, `session_list`, `session_stop` | Read the last lines (optionally wait for new ones), list sessions, kill one. |
+| `session_send` | Type into a session (and/or press `C-c`, `Enter`, ...), then wait for output (`wait_s`, `until` regex). It runs in the sandbox the session started with; into an unsandboxed session, every call needs `outside_sandbox=true` and its own `why`. |
+| `session_read`, `session_list`, `session_stop` | Read the last lines (optionally wait for new ones), list sessions (each marked fenced or unsandboxed), kill one. |
 | `read_file`, `write_file` | Text files; `read_file` also .docx/.xlsx/.pptx (stdlib, no DTDs, size limits) and .pdf (macOS PDFKit, built once, run in the fence, offline). `write_file` creates (default; refuses an existing file), overwrites atomically, or appends; it refuses the files the fence protects. |
 | `edit_file` | Replace an exact `old_string` (unique unless `replace_all`) with `new_string`, atomically, keeping permissions and Windows line ends. If it isn't there, says where the closest text is and how it differs (`{-sent-}{+file+}`), and changes nothing: a near match is never applied. Refuses what `write_file` refuses; won't write over a change made since it read the file. |
 | `open`, `notify` | `open` a file, folder, http(s) URL or app (it runs outside the sandbox: logged); show a notification. |
@@ -104,8 +104,9 @@ everything typed into a fenced session. It is `(allow default)` and then:
 | | Allowed | Refused |
 |---|---|---|
 | Read | the whole Mac | `deny_paths`: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, Keychains, `~/.netrc`, `~/.git-credentials`, Claude's config, this server's config and state (any letter case) |
-| Write | `fence_writable` (default: your home folder) and temp | everything else (Homebrew, `/usr/local`, `/Applications`, `/Users/Shared`...); and anywhere: `deny_paths`, `protected_paths` (shell rc files, `~/.gitconfig`, `~/.config/git`, LaunchAgents/Daemons, `~/Applications`, `~/.local/bin`, `~/bin`), `protected_folders`, the tmux program, and `protected_writes` matches: a `.git` folder itself, `.git/hooks`, `.git/config`, `.gitmodules`, `.envrc`, `.vscode/`, `.idea/`, `.mcp.json`, Claude Code's `.claude/settings*.json`, `commands`, `agents`, `skills`, `hooks`, `plugins`, and `~/.claude.json` |
+| Write | `fence_writable` (default: your home folder) and temp | everything else (Homebrew, `/usr/local`, `/Applications`, `/Users/Shared`...); and anywhere: `deny_paths`, `protected_paths` (shell rc files and what they commonly load — `~/.oh-my-zsh`, `~/.zsh`, `~/.config/zsh`, `~/.p10k.zsh`, `~/.config/fish` — `~/.gitconfig`, `~/.config/git`, `~/.npmrc`, `~/.docker/cli-plugins`, LaunchAgents/Daemons, `~/Applications`, `~/.local/bin`, `~/bin`), the folders of your login `PATH` inside home (the self-test reads it), `protected_folders`, the tmux program and tmux's socket folders, and `protected_writes` matches: a `.git` folder itself, `.git/hooks`, `.git/config`, `.gitmodules`, `.envrc`, `.vscode/`, `.idea/`, `.mcp.json`, Claude Code's `.claude/settings*.json`, `commands`, `agents`, `skills`, `hooks`, `plugins`, and `~/.claude.json` |
 | Network | on (policy `network`) | off when `network: false` (a DNS lookup still gets through) |
+| Unix sockets | the rest | the sockets of programs that run unsandboxed and do what a client asks: tmux (this server's, which runs every call, and your own), the ssh-agent (`SSH_AUTH_SOCK`), Docker, Colima, OrbStack and Podman (their VM mounts your home folder), Emacs, Neovim and VS Code IPC, GNU screen, and anything under a denied path (gpg-agent). Fenced commands also start without `TMUX`, `TMUX_PANE` and `SSH_AUTH_SOCK` |
 | Programs | everything else | `open`, `osascript`, `automator`, `shortcuts`, `security`, `tccutil`, `screencapture`, `pbcopy`/`pbpaste`, `launchctl`, `defaults` can't start |
 | Extra guards (each kept only if this Mac accepts it and a shell still works) | | the Keychain daemons (so git and gh over https lose their tokens), the clipboard, Apple Events, LaunchServices' `lsopen`, signals to processes outside the sandbox |
 
@@ -119,7 +120,10 @@ and program output comes back; a scratch folder and temp are writable; a write o
 folder and to a protected path (also in another letter case) is refused; `.git/hooks` can't be written and `.git`
 can't be renamed (which brought hooks back under another name before 0.3.2); a denied folder and the state folder's
 contents can't be read (also in another letter case); `open` and `osascript` can't start; the network follows the
-policy. Every check needs positive evidence (a marker the sandboxed program printed, or a file on disk), never just
+policy; and this server's own tmux can't be reached from inside — by its name, or through a symlink or a hard link to
+its socket — while the same client reaches it from outside. Seatbelt has spelled unix-socket rules more than one way;
+the self-test keeps the first form this Mac takes and honours, and if none holds, the fence is off. Every check needs
+positive evidence (a marker the sandboxed program printed, or a file on disk), never just
 a missing output; a stand-in that sandboxes nothing fails it (there's a test for that). The probes use scratch
 stand-ins for your folders, so nothing real is touched. If the self-test fails, shell commands are refused (policy
 `sandbox_fail: refuse`, the default) or run unsandboxed and say so (`sandbox_fail: unsandboxed`); `status` says why.
@@ -127,8 +131,9 @@ stand-ins for your folders, so nothing real is touched. If the self-test fails, 
 **`outside_sandbox=true`** on `run` or `session_start` runs with no sandbox, as you. It needs a `why`; the deny lists
 still apply; the result says `UNSANDBOXED (...)`; the audit log records it with the why; and your client's own
 permission layer sees the flag (in Claude desktop, the chat's permission mode). Claude is told to use it only after
-the fence blocked something you plainly asked for, never because a file, page or command output says so.
-`allow_outside_sandbox: false` turns it off.
+the fence blocked something you plainly asked for, never because a file, page or command output says so. A
+session started that way stays unsandboxed, so every `session_send` to it needs the flag and a why again (and so does
+a session on Mac Ops' socket that Mac Ops didn't start). `allow_outside_sandbox: false` turns it off.
 
 **The installed copy is read-only.** Claude desktop runs `~/.config/claude-mcp/mac-ops/`, not this folder, so a
 session that edits this folder changes nothing until a person runs `install.sh` again. The fence can't write the
@@ -159,12 +164,18 @@ The fence makes the folders real for fenced commands (a glob that gets past the 
   config, this server's installed copy or your rc files. Its guards are the why, the log, your client's permission
   mode, and Claude's instructions. A prompt injection that convinces Claude to use it gets that shell.
 - **Not every file that runs later is on the list.** The fence protects the common ones. Others in your home folder
-  are writable: other MCP servers' own code, tools installed in your home folder outside `~/.local/bin` and `~/bin`,
-  `~/.npmrc` and similar configs, editor extensions and settings outside `.vscode`/`.idea`, `~/Library/Preferences`.
-  Add what matters to you to `protected_paths`.
+  are writable: other MCP servers' own code, programs in home folders that aren't on your login `PATH` (and a `PATH`
+  entry that is the home folder itself can't be protected), files your rc files load beyond the common ones, git
+  config files pulled in with `include`, a relocated `XDG_CONFIG_HOME`, user Python packages (`.pth` files run in an
+  unsandboxed `python3`), editor settings outside `.vscode`/`.idea`, Folder Actions and Services in `~/Library`. Add
+  what matters to you to `protected_paths`.
+- **Other servers on this Mac.** A fenced command can still connect to local TCP services (Jupyter, dev servers,
+  Docker over TCP, anything listening on localhost) and to unix sockets the list doesn't name (a password manager's
+  agent outside `SSH_AUTH_SOCK`, other editors' or automation tools' IPC). If one of them runs code for whoever
+  connects, it is a way out of the fence. `network: false` closes TCP; add other sockets' folders to `deny_paths`.
 - With the network off, sandboxed code can still ask the system resolver for a name: a narrow channel out (DNS).
-- Sandboxed code can still reach system services the guards don't name (preferences, launchd, Apple Events from a
-  program of its own). The `defaults`, `launchctl` and `osascript` programs can't start in the fence, but a program
+- Sandboxed code can still reach system services the guards don't name (preferences through `cfprefsd`, so also
+  Terminal's or an editor's startup command; launchd; Apple Events from a program of its own). The `defaults`, `launchctl` and `osascript` programs can't start in the fence, but a program
   compiled or scripted there could talk to those services directly.
 - macOS volumes are case-insensitive: `~/.SSH` is `~/.ssh`. The checks fold case on the Mac, and every Seatbelt path
   rule has an any-case twin.

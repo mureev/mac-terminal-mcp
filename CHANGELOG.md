@@ -11,8 +11,16 @@ The approval system is gone; the macOS sandbox carries the weight (design-decisi
   `deny_paths`; writes only under `fence_writable` (new; default the home folder) and temp, never to `deny_paths`, the
   state folder, `protected_paths`, `protected_folders`, the tmux program, or a `protected_writes` match; network per
   `network` (new; default on); the exec guard and the extra guards as before.
+- **No way back out through a server that runs unsandboxed.** Fenced commands can't connect to tmux's sockets (this
+  server's, which runs every call, and the user's own), the ssh-agent, Docker/Colima/OrbStack/Podman, Emacs, Neovim,
+  VS Code IPC, GNU screen, or sockets under denied paths; they can't write tmux's socket folders; they start without
+  `TMUX`, `TMUX_PANE`, `SSH_AUTH_SOCK`. The tmux rule is core: the self-test proves it (by name, symlink and hard
+  link, against the live server) and keeps the first Seatbelt form this Mac honours. (0.6 had this hole under
+  network grants.) The login `PATH`'s folders inside home are protected; so are `~/.oh-my-zsh`, `~/.zsh`,
+  `~/.config/zsh`, `~/.p10k.zsh`, `~/.config/fish`, `~/.npmrc`, `~/.docker/cli-plugins`; `~/.config/gh` is denied.
 - **`outside_sandbox=true`** on `run` and `session_start`: no sandbox, with a required `why`; the deny lists still
-  apply; logged with the why; `allow_outside_sandbox` (new; default true) turns it off.
+  apply; logged with the why; `allow_outside_sandbox` (new; default true) turns it off. A session started that way
+  stays unsandboxed: every `session_send` to it needs the flag and a why too; `session_list` and `status` mark it.
 - **write_file and edit_file** refuse what the fence protects, in the server's own Python, and otherwise write without
   asking. `open` no longer asks (logged).
 - **Self-test** rebuilt for the fence, with scratch stand-ins for the policy's folders. If it fails: `sandbox_fail`
@@ -20,7 +28,7 @@ The approval system is gone; the macOS sandbox carries the weight (design-decisi
 - **Policy:** `always_ask_paths` is now `protected_paths` (a 0.6 policy's list is read as it), with `~/Applications`,
   `~/.local/bin` and `~/bin` added; `protected_writes` adds Claude Code's `.claude/settings*.json`, `skills`, `hooks`,
   `plugins` and `~/.claude.json`. 0.6's dialog and grant keys are ignored and listed by `status`, and a 0.6 policy's
-  protected lists gain 0.7's additions.
+  protected and denied lists gain 0.7's additions. The server runs `ps` and `pgrep` by absolute path.
 - **Audit log:** each call's end records `how`: `fenced`, `unsandboxed` (with its why) or `python`.
 - `install.sh` refuses to install from a command Mac Ops runs (`MAC_OPS` set; `--check` still works).
 - `tests/fence_probe.py` replaces the 0.3.2 sandbox-runtime experiment (it compared read and grant profiles that no

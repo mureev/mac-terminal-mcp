@@ -156,8 +156,13 @@ class Run(Base):
     @unittest.skipUnless(HAVE_TMUX, "needs tmux")
     def test_run_goes_through_tmux_and_leaves_no_session(self):
         """macOS privacy lets tmux read Documents, not the server's Python: run executes in the tmux server."""
-        t = self.ok("run", command="echo in:${TMUX:+tmux}; echo to-stderr >&2; exit 4")
-        self.assertIn("in:tmux", t)
+        os.environ["SSH_AUTH_SOCK"] = os.path.join(self.tmp, "agent.sock")
+        self.addCleanup(os.environ.pop, "SSH_AUTH_SOCK", None)
+        t = self.ok("run", command="echo in:${TMUX:+tmux}:${SSH_AUTH_SOCK:+agent}; echo to-stderr >&2; exit 4",
+                    outside_sandbox=True, why="test: look at the pane's environment")
+        self.assertIn("in:tmux:agent", t)
+        f = self.ok("run", command="echo fenced:${TMUX:-unset}:${TMUX_PANE:-unset}:${SSH_AUTH_SOCK:-unset}")
+        self.assertIn("fenced:unset:unset:unset", f)                    # v0.7: they point at unsandboxed servers
         self.assertIn("to-stderr", t)
         self.assertIn("exit 4", t)
         self.assertNotIn(M.X_PREFIX, self.ok("session_list"))
@@ -589,8 +594,9 @@ class Fence(Base):
     def test_default_protections(self):
         P = M.load_policy(None)
         for x in ("~/.zshrc", "~/.zprofile", "~/.bashrc", "~/.gitconfig", "~/Library/LaunchAgents", "~/Applications",
-                  "~/.local/bin"):
+                  "~/.local/bin", "~/.oh-my-zsh", "~/.config/zsh", "~/.npmrc", "~/.docker/cli-plugins"):
             self.assertIn(os.path.realpath(os.path.expanduser(x)), P["protected_paths"], x)
+        self.assertIn(os.path.realpath(os.path.expanduser("~/.config/gh")), P["deny_paths"])
         self.assertEqual(P["fence_writable"], [os.path.realpath(os.path.expanduser("~"))])
         for path in ("/p/.git/hooks/pre-commit", "/p/.git/config", "/p/.git", "/p/.vscode/tasks.json", "/p/.mcp.json",
                      "/p/.claude/settings.json", "/p/.claude/settings.local.json", "/p/.claude/hooks/x.sh",
@@ -650,6 +656,76 @@ class SelfTestHasTeeth(Base):
         self.assertIn("isn't working", self.refused("run", command="true"))               # sandbox_fail: refuse
 
 
+class Sockets(Base):
+    """v0.7: tmux (unsandboxed) runs whatever a connected client asks: the fence can't connect to it, nor to agents."""
+
+    def test_unix_socket_rules_in_the_profile(self):
+        os.environ["SSH_AUTH_SOCK"] = "/private/tmp/com.apple.launchd.AbC/Listeners"
+        self.addCleanup(os.environ.pop, "SSH_AUTH_SOCK", None)
+        self.ok("run", command="true")
+        p = self.profile()
+        uid = os.getuid()
+        dirs = M.tmux_socket_dirs()
+        self.assertTrue({f"/tmp/tmux-{uid}", f"/private/tmp/tmux-{uid}"} <= set(dirs), dirs)
+        deny = [ln for ln in p.splitlines() if ln.startswith("(deny file-write* (subpath")][0]
+        for d in dirs:
+            rx = M.ci_path_rx(d)
+            self.assertIn(f'(deny network-outbound (remote unix-socket (path-regex #"{rx}(/|$)")))', p)
+            self.assertIn(f'(subpath "{d}")', deny)                         # and no writes there (rename, sockets)
+        self.assertIn('(deny file-link (regex #"', p)
+        for rx in ("/docker[.]sock$", "^/private/tmp/com[.]apple[.]launchd[.][^/]+/Listeners$", "/[.]colima/",
+                   "/emacs[0-9]+/", "/vscode-ipc-[^/]+[.]sock$"):
+            self.assertIn(f'(path-regex #"{M.ci_rx(rx)}")', p, rx)
+        self.assertIn(M.ci_path_rx("/private/tmp/com.apple.launchd.AbC/Listeners") + "$", p)
+        ssh = M.ci_path_rx(os.path.realpath(os.path.expanduser("~/.ssh")))
+        self.assertIn(f'(remote unix-socket (path-regex #"{ssh}(/|$)"))', p)    # a denied path's sockets too
+        reg = M.socket_rules("regex", False)
+        self.assertTrue(reg and all(x.startswith('(deny network-outbound (regex #"') for x in reg), reg)
+        lit = M.socket_rules("literal", True)
+        self.assertIn(f'(deny network-outbound (literal "/private/tmp/tmux-{uid}/{self.socket}"))', lit)
+        self.assertIn(f'(deny network-outbound (literal "/tmp/tmux-{uid}/default"))', lit)
+        self.assertTrue(lit[-1].startswith("(deny file-link "), lit[-1])
+        self.assertFalse([x for x in M.socket_rules("unix-socket", False) if "file-link" in x])
+
+    def test_tmux_tmpdir_is_followed(self):
+        os.environ["TMUX_TMPDIR"] = os.path.join(self.tmp, "tt")
+        self.addCleanup(os.environ.pop, "TMUX_TMPDIR", None)
+        self.assertIn(os.path.join(os.path.realpath(self.tmp), "tt", f"tmux-{os.getuid()}"), M.tmux_socket_dirs())
+
+    def test_writes_into_tmux_folders_are_refused(self):
+        for d in M.tmux_socket_dirs():
+            self.assertIn("is protected", self.refused("write_file", path=os.path.join(d, "x"), content="x"))
+
+    def test_path_folders_in_home_are_protected(self):
+        h, t = M.home(), M.temp_dirs()[0]
+        got = M.writable_path_dirs(f"/usr/bin:{h}/.cargo/bin:{h}:.:rel/bin:{h}/.cargo/bin:{t}/x/bin:/opt/homebrew/bin")
+        self.assertEqual(got, [f"{h}/.cargo/bin", f"{t}/x/bin"])          # not a root itself, nor outside the roots
+        self.ok("status")
+        M.sandbox_status()["path_dirs"] = [os.path.join(self.home, "bin")]  # as the self-test finds them
+        self.assertIn("login PATH", self.refused("write_file", path=os.path.join(self.home, "bin", "git"),
+                                                 content="x", make_dirs=True))
+        self.ok("run", command="true")
+        self.assertIn(f'(subpath "{os.path.realpath(os.path.join(self.home, "bin"))}")', self.profile())
+
+    @unittest.skipUnless(HAVE_TMUX, "needs tmux")
+    def test_the_tmux_probe_sees_a_client_that_gets_through(self):
+        """Unsandboxed, the probe reaches tmux: it must say so (its teeth), and read its markers right."""
+        self.ok("run", command="true")                                      # this test's tmux server is up
+        sock = M.via_tmux([M.tmux_exe(), "-L", self.socket, "list-sessions", "-F", "#{socket_path}"], self.home, 10,
+                          merge=True)[1].strip().splitlines()[0]
+        work = os.path.join(self.home, "w")
+        os.makedirs(work)
+        held, out = M.tmux_probe(lambda argv: M.via_tmux(argv, self.home, 15, merge=True)[:2], work, sock)
+        self.assertFalse(held, out)
+        self.assertIn("mac-ops-tmux-reached-L", out)
+        self.assertIn("mac-ops-tmux-reached-sl", out)
+        self.assertEqual(os.listdir(work), [])                              # its links are gone
+        refused = "tmux-L-rc=1\ntmux-sl-rc=1\ntmux-hl-rc=1\n"
+        self.assertTrue(M.tmux_probe(lambda argv: (0, refused), work, sock)[0])
+        self.assertFalse(M.tmux_probe(lambda argv: (0, "tmux-L-rc=1\ntmux-sl-rc=1\n"), work, sock)[0])  # no evidence
+        self.assertFalse(M.tmux_probe(lambda argv: (0, refused.replace("hl-rc=1", "hl-rc=0")), work, sock)[0])
+
+
 class NetworkOff(Base):
     def policy_extra(self):
         return {"network": False}
@@ -692,13 +768,36 @@ class OutsideSandbox(Base):
         self.assertEqual(self.audit_ends()[-1]["how"], "-")                 # refused before it was routed
 
     @unittest.skipUnless(HAVE_TMUX, "needs tmux")
-    def test_an_unsandboxed_session(self):
+    def test_an_unsandboxed_session_asks_for_the_flag_every_time(self):
         t = self.ok("session_start", name="u1", outside_sandbox=True, why="the user wants a plain shell")
         self.assertIn("session u1 (unsandboxed)", t)
-        self.ok("session_send", name="u1", text="echo typed", wait_s=2)
+        marker = os.path.join(self.home, "typed")
+        for extra in ({}, {"outside_sandbox": True}, {"outside_sandbox": True, "why": "  "}, {"why": "the user asked"}):
+            t = self.refused("session_send", name="u1", text=f"touch {marker}", **extra)
+            self.assertIn("needs outside_sandbox=true and why", t, extra)
+        self.refused("session_send", name="u1", key="C-c")                  # keys too
+        time.sleep(1)
+        self.assertFalse(os.path.exists(marker))
+        self.ok("session_send", name="u1", text=f"touch {marker}", outside_sandbox=True,
+                why="the user asked for the marker file", wait_s=3)
+        for _ in range(20):
+            if os.path.exists(marker):
+                break
+            time.sleep(0.2)
+        self.assertTrue(os.path.exists(marker))
         end = self.audit_ends()[-1]
         self.assertEqual(end["how"], "unsandboxed")
-        self.assertIn("outside the sandbox", end["why"])
+        self.assertEqual(end["why"], "outside_sandbox: the user asked for the marker file")
+        self.assertIn("u1 (unsandboxed)", self.ok("session_list"))
+        self.assertIn("u1: unsandboxed", self.ok("status"))
+
+    @unittest.skipUnless(HAVE_TMUX, "needs tmux")
+    def test_a_fenced_session_refuses_the_flag(self):
+        self.ok("session_start", name="f1")
+        t = self.refused("session_send", name="f1", text="echo x", outside_sandbox=True, why="the user asked")
+        self.assertIn("runs in the fence", t)
+        self.ok("session_send", name="f1", text="echo x", wait_s=1)
+        self.assertIn("f1 (fenced)", self.ok("session_list"))
 
 
 class OutsideSandboxOff(Base):
@@ -712,6 +811,14 @@ class OutsideSandboxOff(Base):
         self.assertFalse(os.path.exists(os.path.join(self.home, "o1")))
         self.assertIn("outside_sandbox: off", self.ok("status"))
         self.ok("run", command="echo fenced-still-works")
+
+    @unittest.skipUnless(HAVE_TMUX, "needs tmux")
+    def test_a_session_mac_ops_did_not_start_is_unsandboxed(self):
+        M.policy()
+        M.tmux("new-session", "-d", "-s", "manual")                     # e.g. the user's, on Mac Ops' socket
+        t = self.refused("session_send", name="manual", text="echo x", outside_sandbox=True, why="the user asked")
+        self.assertIn("runs outside the sandbox", t)
+        self.assertIn("allow_outside_sandbox: false", t)
 
 
 class ProtectedWrites(Base):
@@ -788,6 +895,7 @@ class LegacyPolicy(Base):
         self.assertIn(os.path.realpath(os.path.expanduser("~/.zshrc")), P["protected_paths"])
         self.assertIn(os.path.realpath(os.path.expanduser("~/.local/bin")), P["protected_paths"])      # 0.7's added
         self.assertIn("/[.]claude[.]json$", P["protected_writes"])
+        self.assertIn(os.path.realpath(os.path.expanduser("~/.config/gh")), P["deny_paths"])
         self.assertIn("include 0.7's defaults", "; ".join(P["_legacy"]))
         for k in ("approvals", "confirm_tools", "always_ask", "grant_minutes", "allow_repeat_minutes", "grant_hint",
                   "always_ask_paths"):
@@ -985,6 +1093,27 @@ class MacSandbox(Base):
         self.assertIn("fenced: macOS sandbox", t)
         self.assertNotIn("very-secret-value", t)
         self.assertIn("cat-refused", t)
+
+    def test_tmux_is_unreachable_from_the_fence(self):
+        probe = self.probe()
+        T = M.tmux_exe()
+        t = self.ok("run", command=f"{T} -L {self.socket} list-sessions -F reached-it; echo tmux-rc=$?; "
+                                   f"{T} -L {self.socket} new-window 'touch {probe}'; true", cwd=self.proj)
+        self.assertNotIn("reached-it", t)
+        self.assertNotIn("tmux-rc=0", t)
+        time.sleep(1)
+        self.assertFalse(os.path.exists(probe))                              # new-window would run unsandboxed
+        t = self.ok("run", command=f"{T} -L {self.socket} list-sessions -F reached-it", outside_sandbox=True,
+                    why="test: the same client, unsandboxed")
+        self.assertIn("reached-it", t)
+        self.assertIn("tmux unreachable", "; ".join(M.sandbox_status()["checks"]))
+
+    def test_a_fenced_session_cannot_drive_tmux(self):
+        probe = self.probe()
+        self.ok("session_start", name="ft", cwd=self.proj)
+        self.ok("session_send", name="ft", text=f"{M.tmux_exe()} -L {self.socket} run-shell 'touch {probe}'", wait_s=3)
+        time.sleep(1)
+        self.assertFalse(os.path.exists(probe))
 
     def test_a_session_keeps_the_fence(self):
         probe = self.probe()
