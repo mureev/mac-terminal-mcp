@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" role="img" aria-labelledby="t d">
+  <title id="t">Mac Terminal MCP: what the fence does</title>
+  <desc id="d">A terminal window. npm test runs in the fence. Reading ~/.ssh is refused. Writing ~/.zshrc is refused because it runs later, outside the fence. git push fails with no Keychain inside the fence, then reruns with outside_sandbox and a reason. Every call is logged.</desc>
+  <defs>
+    <clipPath id="win"><rect x="0.5" y="0.5" width="759" height="299" rx="12"/></clipPath>
+  </defs>
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+    .cmd  { font-size: 14px; fill: #e6edf3; }
+    .ps   { font-size: 14px; fill: #6e7681; }
+    .res  { font-size: 13px; }
+    .ok   { fill: #3fb950; }
+    .no   { fill: #f85149; }
+    .warn { fill: #d29922; }
+    .mute { fill: #8b949e; }
+  </style>
+
+  <g clip-path="url(#win)">
+    <rect width="760" height="300" fill="#0d1117"/>
+    <rect width="760" height="40" fill="#161b22"/>
+    <line x1="0" y1="40" x2="760" y2="40" stroke="#30363d"/>
+  </g>
+  <rect x="0.5" y="0.5" width="759" height="299" rx="12" fill="none" stroke="#30363d"/>
+
+  <circle cx="22" cy="20" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="20" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="20" r="6" fill="#28c840"/>
+  <text x="380" y="25" text-anchor="middle" class="mono mute" font-size="13">claude — mac-terminal</text>
+  <rect x="610" y="10" width="134" height="20" rx="10" fill="none" stroke="#238636"/>
+  <text x="677" y="24" text-anchor="middle" class="mono ok" font-size="11">fenced · Seatbelt</text>
+
+  <g class="mono">
+    <text x="28" y="80" class="ps">$</text>
+    <text x="48" y="80" class="cmd">npm test</text>
+    <text x="400" y="80" class="res ok">✓ runs in the fence</text>
+
+    <text x="28" y="116" class="ps">$</text>
+    <text x="48" y="116" class="cmd">cat ~/.ssh/id_ed25519</text>
+    <text x="400" y="116" class="res no">✗ refused · credentials</text>
+
+    <text x="28" y="152" class="ps">$</text>
+    <text x="48" y="152" class="cmd">echo 'alias ll="ls -l"' &gt;&gt; ~/.zshrc</text>
+    <text x="400" y="152" class="res no">✗ refused · runs later, outside the fence</text>
+
+    <text x="28" y="188" class="ps">$</text>
+    <text x="48" y="188" class="cmd">git push</text>
+    <text x="400" y="188" class="res warn">✗ no Keychain inside the fence</text>
+
+    <text x="28" y="224" class="ps">$</text>
+    <text x="48" y="224" class="cmd">git push</text>
+    <rect x="130" y="210" width="122" height="20" rx="10" fill="#2d2208" stroke="#9e6a03"/>
+    <text x="191" y="224" text-anchor="middle" class="warn" font-size="11">outside_sandbox</text>
+    <text x="400" y="224" class="res ok">✓ ran · why: "push the fix you asked for"</text>
+  </g>
+
+  <line x1="24" y1="250" x2="736" y2="250" stroke="#21262d"/>
+  <text x="28" y="276" class="mono mute" font-size="12">no dialogs · every call logged to ~/.local/state/mac-terminal/audit.jsonl</text>
+</svg>
