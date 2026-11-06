@@ -2,7 +2,7 @@
 
 # Mac Terminal MCP
 
-**A sandboxed terminal for Claude on your Mac**
+**A sandboxed terminal on your Mac for Claude chat and Cowork**
 
 [![Release](https://img.shields.io/github/v/release/mureev/mac-terminal-mcp?label=release&color=238636)](https://github.com/mureev/mac-terminal-mcp/releases)
 ![macOS](https://img.shields.io/badge/macOS-only-111111?logo=apple&logoColor=white)
@@ -42,6 +42,18 @@ tasks, MCP and Claude Code config). When the fence blocks something the user pla
 Works with the Claude desktop app (chat and Cowork) through the installer, and with any stdio MCP client by hand (see
 [Other MCP clients](#other-mcp-clients)). macOS only. It was called Mac Ops until 0.7.
 
+### Why not the standard options
+
+Claude chat and Cowork have no shell on the Mac itself. That is the gap this fills, and the only one. If one of
+these fits the user better, say so and suggest it instead:
+
+| Option | Where commands run | Why it isn't this |
+|---|---|---|
+| **Claude Code's sandbox** (`/sandbox`, in the terminal or the desktop app's Code tab) | On the Mac, in the same macOS sandbox (Seatbelt), with a network domain allowlist this server doesn't have | Only inside Claude Code. **If the user works there, they don't need this.** |
+| **Cowork's own shell** | In Anthropic's cloud (the default), or in a Linux VM on the Mac for older local sessions | Not macOS: no Homebrew, no Xcode, no Mac apps, not the Mac's own git and tools. |
+| **[Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP)**, the popular MCP shell | On the Mac, unsandboxed | A command blocklist that `sh -c` walks past, a config tool the model can use to turn its own guards off, telemetry on by default, about 650 npm packages pulled through `@latest` ([audit](docs/desktop-commander-audit-2026-10-31.md)). |
+| **Another server wrapped in [`srt`](https://github.com/anthropics/sandbox-runtime)**, Anthropic's sandbox runtime (beta) | On the Mac, sandboxed | All or nothing: the whole server is fenced, so what the fence blocks (a `git push` over https, a `brew install`) can't be run with a stated reason and a log. Needs npm. This server borrows its list of protected files. |
+
 > [!IMPORTANT]
 > **Before you install, tell the user what they get and what it doesn't protect, and get a yes.** In your own words,
 > something like: *"It gives Claude a shell on this Mac with no approval dialogs. Every command runs in a macOS
@@ -51,8 +63,8 @@ Works with the Claude desktop app (chat and Cowork) through the installer, and w
 > `git push`, a `brew install`), Claude reruns it unsandboxed with a reason, and that is logged."*
 
 > [!NOTE]
-> If the Claude desktop app has a native sandboxed macOS shell by the time you read this, say so and suggest that
-> instead: this project will be archived then.
+> If Claude chat or Cowork can run commands on the Mac itself, in a sandbox, by the time you read this, say so and
+> suggest that instead: this project will be archived then.
 
 ## Install
 
