@@ -474,7 +474,7 @@ def protected_write(path: str):
     for d in P["protected_paths"] + tmux_paths() + tmux_socket_dirs():
         if under_ci(path, d):
             return f"it is under {tilde(d)}, which runs later outside the sandbox (policy protected_paths)"
-    for d in sandbox_status().get("path_dirs", []):
+    for d in map(os.path.realpath, sandbox_status().get("path_dirs", [])):   # path is real; /var is /private/var
         if under_ci(path, d):
             return f"it is under {tilde(d)}, a folder on the login PATH: programs there run later outside the sandbox"
     for rx in P["_protected_writes"]:
@@ -554,20 +554,22 @@ def sb_paths(paths: list, tail: str = "(/|$)") -> list:
 
 
 def sb_profile(extras=None, roots=None, more_deny=(), more_protected=(), network=None, sockets=None,
-               path_dirs=None) -> str:
+               path_dirs=None, temp=True) -> str:
     """The fence. Writes only under fence_writable and temp, and never to denied or protected paths, protected folders,
     the tmux program and tmux's socket folders, the login PATH's folders in home, the state folder or a
     protected_writes match; denied paths unreadable, the state folder's contents too; network as the policy says; no
     connections to tmux's or an agent's unix socket; the exec guard and the extra guards this Mac took. extras,
     sockets (a SOCKET_FORMS entry, or False for none) and path_dirs default to what the self-test found; roots,
-    more_deny, more_protected: its scratch stand-ins for the policy's paths. network: False for reading PDFs."""
+    more_deny, more_protected: its scratch stand-ins for the policy's paths. network: False for reading PDFs. temp:
+    False only for the self-test's 'outside' probe, whose scratch may itself sit in temp (as in the test suite)."""
     P = policy()
     if extras is None or sockets is None or path_dirs is None:
         st = sandbox_status()
         extras = st["extras"] if extras is None else extras
         sockets = tuple(st.get("sockets") or SOCKET_FORMS[0]) if sockets is None else sockets
         path_dirs = st.get("path_dirs", []) if path_dirs is None else path_dirs
-    writable = list(P["fence_writable"] if roots is None else roots) + temp_dirs()
+    path_dirs = [os.path.realpath(d) for d in path_dirs]      # Seatbelt sees real paths: /var is /private/var
+    writable = list(P["fence_writable"] if roots is None else roots) + (temp_dirs() if temp else [])
     denied = sorted(set(P["deny_paths"] + [P["state_dir"]] + list(more_deny)))
     protected = sorted(set(P["protected_paths"] + P["protected_folders"] + tmux_paths() + tmux_socket_dirs() +
                            list(path_dirs) + list(more_protected)))
@@ -717,6 +719,10 @@ def _selftest() -> dict:
         fence = sb_profile(extras=[], sockets=False, path_dirs=[])
         probe = sb_profile(extras=[], roots=[work], more_deny=[deny], more_protected=[prot], sockets=False,
                            path_dirs=[])
+        # The same rules without temp among the writable folders: 'outside' must be outside every folder the probe may
+        # write, and this run's scratch sits in temp when the state folder does (the test suite keeps it there).
+        bare = sb_profile(extras=[], roots=[work], more_deny=[deny], more_protected=[prot], sockets=False,
+                          path_dirs=[], temp=False)
         basic = list(P["shell"]) + [f"echo {APP}-ok; git --version >/dev/null 2>&1 && echo git-ok; "
                                     f"printf '{APP}-path=%s\\n' \"$PATH\""]
         rc, out = sb(fence, basic)
@@ -737,7 +743,7 @@ def _selftest() -> dict:
         if not os.path.exists(tmpf):
             return fail(f"the sandbox blocked the temp folder {os.path.dirname(tmpf)}, which tools need")
         st["checks"].append("its folders and temp writable")
-        rc, out = sb(probe, [sh, "-c", f"/usr/bin/touch {shlex.quote(os.path.join(outside, 'x'))}; echo touch-rc=$?; "
+        rc, out = sb(bare, [sh, "-c", f"/usr/bin/touch {shlex.quote(os.path.join(outside, 'x'))}; echo touch-rc=$?; "
                                        f"/usr/bin/touch {shlex.quote(os.path.join(base, 'w'))}; echo touch-rc=$?; "
                                        f"/usr/bin/touch {shlex.quote(os.path.join(prot, 'x'))}; echo touch-rc=$?"])
         if (os.path.exists(os.path.join(outside, "x")) or os.path.exists(os.path.join(base, "w")) or

@@ -753,6 +753,20 @@ class SelfTestHasTeeth(Base):
         self.assertFalse([x for x in os.listdir(self.tmp) if "selftest" in x])           # its scratch is gone
         self.assertEqual(os.listdir(os.path.join(self.tmp, "state", "selftest")), [])
         self.assertIn("isn't working", self.refused("run", command="true"))               # sandbox_fail: refuse
+        # It failed at the 'outside' write, whose profile leaves temp out: this run's scratch sits in temp here, as it
+        # did on a Mac, where the probe could write 'outside' and the self-test failed on a sound sandbox (0.7.0).
+        allow = [ln for ln in self.profile().splitlines() if "require-not" in ln][0]
+        for t in M.temp_dirs():
+            self.assertNotIn(f"(subpath {M.sbq(t)})", allow)
+        self.assertIn("-selftest-", allow)
+
+    def test_the_outside_probe_has_no_temp(self):
+        work = os.path.join(self.tmp, "w")
+        with_temp, bare = (M.sb_profile(extras=[], roots=[work], sockets=False, path_dirs=[], temp=t) for t in (True, False))
+        for t in M.temp_dirs():
+            self.assertIn(f"(subpath {M.sbq(t)})", with_temp)
+            self.assertNotIn(f"(subpath {M.sbq(t)})", bare)
+        self.assertIn(f"(subpath {M.sbq(work)})", bare)
 
 
 class Sockets(Base):
@@ -794,6 +808,19 @@ class Sockets(Base):
     def test_writes_into_tmux_folders_are_refused(self):
         for d in M.tmux_socket_dirs():
             self.assertIn("is protected", self.refused("write_file", path=os.path.join(d, "x"), content="x"))
+
+    def test_path_folders_are_compared_as_real_paths(self):
+        """On a Mac the temp folder is /var/folders/..., really /private/var/folders/...: a login-PATH folder spelled
+        through a symlink must still protect the real folder, in write_file and in the profile (0.7.0 missed it)."""
+        real = os.path.realpath(os.path.join(self.home, "bin"))
+        os.makedirs(real)
+        link = os.path.join(self.tmp, "home-link")
+        os.symlink(self.home, link)
+        self.ok("status")
+        M.sandbox_status()["path_dirs"] = [os.path.join(link, "bin")]
+        self.assertIn("login PATH", self.refused("write_file", path=os.path.join(real, "git"), content="x"))
+        self.ok("run", command="true")
+        self.assertIn(f"(subpath {M.sbq(real)})", self.profile())
 
     def test_path_folders_in_home_are_protected(self):
         h, t = M.home(), M.temp_dirs()[0]
