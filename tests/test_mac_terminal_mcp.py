@@ -1218,20 +1218,20 @@ class MacSandbox(Base):
         t = self.ok("run", command=f"cat {self.tmp}/secre?/k || echo cat-refused")   # a glob gets past the text match
         self.assertIn("fenced: macOS sandbox", t)
         self.assertNotIn("very-secret-value", t)
-        self.assertIn("cat-refused", t)
+        self.assertRegex(t, r"(?m)^cat-refused$")                    # a printed line, not the command echoed back
 
     def test_tmux_is_unreachable_from_the_fence(self):
         probe = self.probe()
         T = M.tmux_exe()
         t = self.ok("run", command=f"{T} -L {self.socket} list-sessions -F reached-it; echo tmux-rc=$?; "
                                    f"{T} -L {self.socket} new-window 'touch {probe}'; true", cwd=self.proj)
-        self.assertNotIn("reached-it", t)
+        self.assertNotRegex(t, r"(?m)^reached-it$")    # run echoes the command, so look for a printed line only
         self.assertNotIn("tmux-rc=0", t)
         time.sleep(1)
         self.assertFalse(os.path.exists(probe))                              # new-window would run unsandboxed
         t = self.ok("run", command=f"{T} -L {self.socket} list-sessions -F reached-it", outside_sandbox=True,
                     why="test: the same client, unsandboxed")
-        self.assertIn("reached-it", t)
+        self.assertRegex(t, r"(?m)^reached-it$")
         self.assertIn("tmux unreachable", "; ".join(M.sandbox_status()["checks"]))
 
     def test_a_fenced_session_cannot_drive_tmux(self):
