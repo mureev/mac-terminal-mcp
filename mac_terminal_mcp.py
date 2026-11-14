@@ -11,7 +11,7 @@ Installed by install.sh as the "mac-terminal" entry of Claude desktop, from a RE
 Why a copy: the repository folder is writable by every Claude session connected to it. Claude desktop runs the copy
 with the system Python (-I -B), so a change here goes live only when install.sh runs again.
 
-Tools (every call is written to the audit log before it runs; README.md has the safety model):
+Tools (every call is written to the audit log before it runs; AGENTS.md has the safety model):
   run                        one shell command, up to 45 s, no stdin
   session_start / _send / _read / _list / _stop
                              long-running and parallel work in tmux sessions on a dedicated socket
@@ -84,7 +84,7 @@ DEFAULT_POLICY = {
     "default_cwd": "~",
     "run_timeout_max_s": 45,                    # the desktop bridge gives a tool call 60 s
     "output_max_chars": 30000,
-    # A speed bump, not a sandbox (README.md). Words match as whole commands/arguments: 'ssh' matches
+    # A speed bump, not a sandbox (AGENTS.md). Words match as whole commands/arguments: 'ssh' matches
     # 'ssh host' and '/usr/bin/ssh', not 'ssh-keygen' or 'openssh'. They apply with outside_sandbox too.
     "deny_words": ["sudo", "su", "doas", "ssh", "scp", "sftp", "ansible", "ansible-playbook", "ansible-inventory"],
     "deny_patterns": [r"find-generic-password", r"find-internet-password", r"dump-keychain",

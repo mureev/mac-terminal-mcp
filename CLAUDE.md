@@ -1,6 +1,6 @@
 # Mac Terminal MCP — notes for Claude sessions working on this repo
 
-Read `README.md` first (the fence, the safety model), then `docs/design-decisions.md`.
+Read `AGENTS.md` first (the fence, the safety model), then `docs/design-decisions.md`.
 
 - **The installed copy is what runs.** Editing this folder changes nothing until a person re-runs `install.sh` in
   their own Terminal (it refuses to run from a command this server runs). Say so when you change the server or the
