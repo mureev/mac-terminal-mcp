@@ -10,7 +10,7 @@
 ![Dependencies](https://img.shields.io/badge/dependencies-0-238636)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-<p><img src="docs/demo.gif" width="760" alt="A real recording of Claude chat on a Mac (Opus 5.5). Asked to fix the failing tests in a small project and then try adding a comment line to ~/.zshrc, Claude uses mac-terminal: the tests are fixed, and the macOS sandbox refuses the ~/.zshrc write with operation not permitted, because shell startup files run later, outside the sandbox. The working part is sped up."></p>
+<p><img src="docs/demo.gif" width="760" alt="A recreation of a real session in Claude chat on a Mac (Opus 5.5), with its prompt, status and reply. Asked to fix the failing tests in a small project and then try adding a comment line to ~/.zshrc, Claude uses mac-terminal: the tests are fixed, and the macOS sandbox refuses the ~/.zshrc write with operation not permitted, because shell startup files run later, outside the sandbox. Claude's working time is shown at 5x speed."></p>
 
 No approval dialogs: the macOS sandbox keeps Claude away from your keys, your Keychain and your startup files.<br>
 To install it, give your agent this link:
