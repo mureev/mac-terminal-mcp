@@ -10,7 +10,7 @@
 ![Dependencies](https://img.shields.io/badge/dependencies-0-238636)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-<p><img src="docs/readme-terminal.svg" width="760" alt="A terminal window. npm test runs in the fence. Reading ~/.ssh is refused. Writing ~/.zshrc is refused because it runs later, outside the fence. git push fails with no Keychain inside the fence, then reruns with outside_sandbox and a reason. Every call is logged."></p>
+<p><img src="docs/demo.gif" width="760" alt="A real recording of Claude chat on a Mac (Opus 5.5). Asked to fix the failing tests in a small project and then try adding a comment line to ~/.zshrc, Claude uses mac-terminal: the tests are fixed, and the macOS sandbox refuses the ~/.zshrc write with operation not permitted, because shell startup files run later, outside the sandbox. The working part is sped up."></p>
 
 No approval dialogs: the macOS sandbox keeps Claude away from your keys, your Keychain and your startup files.<br>
 To install it, give your agent this link:
