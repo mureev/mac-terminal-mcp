@@ -58,7 +58,7 @@ import traceback
 import zipfile
 from xml.etree import ElementTree as ET
 
-VERSION = "0.7.2"
+VERSION = "0.7.3"
 # The name, in as few places as possible: the MCP server key, its folders and tmux socket, its markers (APP); what
 # people read (APP_TITLE); the prefix of its environment variables (APP_ENV: MAC_TERMINAL=1 in every command it runs,
 # MAC_TERMINAL_POLICY for the policy file). 0.6 and before were "mac-ops" / MAC_OPS.
@@ -1179,6 +1179,13 @@ def tmux_run(*args: str, timeout: float = 10) -> subprocess.CompletedProcess:
 
 def tmux(*args: str) -> str:
     r = tmux_run(*args)
+    # Two clients that find no tmux server both start one; the loser's server exits and the client says "server
+    # exited unexpectedly", having done nothing. Two servers starting at once (two chats, the self-test) hit it.
+    for delay in (0.2, 0.5, 1.0):
+        if r.returncode == 0 or b"server exited unexpectedly" not in r.stderr:
+            break
+        time.sleep(delay)
+        r = tmux_run(*args)
     if r.returncode != 0:
         raise Refused(f"tmux {args[0]}: {r.stderr.decode('utf-8', 'replace').strip() or 'failed'}")
     return r.stdout.decode("utf-8", "replace")

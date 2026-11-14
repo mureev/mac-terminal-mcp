@@ -120,6 +120,29 @@ class Protocol(Base):
             ann = t["annotations"]
             self.assertTrue("readOnlyHint" in ann or "destructiveHint" in ann, t["name"])
 
+    def test_tmux_retries_when_another_client_won_the_server_start(self):
+        """0.7.3: two clients starting the tmux server at once: one gets 'server exited unexpectedly' and did nothing.
+        Retry that (it failed a self-test when two started together); give up on any other error at once."""
+        calls = []
+
+        def fake(*args, timeout=10):
+            calls.append(args)
+            err = b"server exited unexpectedly" if len(calls) == 1 else b""
+            return subprocess.CompletedProcess(args, 1 if err else 0, b"ok", err)
+        real = M.tmux_run
+        M.tmux_run = fake
+        try:
+            self.assertEqual(M.tmux("new-session", "-d", "-s", "x"), "ok")
+            self.assertEqual(len(calls), 2)
+            calls.clear()
+            M.tmux_run = lambda *a, timeout=10: (calls.append(a),
+                                                 subprocess.CompletedProcess(a, 1, b"", b"duplicate session: x"))[1]
+            with self.assertRaises(M.Refused):
+                M.tmux("new-session", "-d", "-s", "x")
+            self.assertEqual(len(calls), 1)
+        finally:
+            M.tmux_run = real
+
     def test_every_argument_and_tool_is_described(self):
         """0.7.2: every argument says what it is and its default, and no tool is a one-liner (agents and Glama's
         tool definition score read these; the weakest tool counts most)."""

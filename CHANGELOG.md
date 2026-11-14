@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.3 — 2026-11-14 — two servers starting at once
+
+- **Retry when another client won the tmux server start.** With no tmux server running, two calls that start one at
+  the same moment (two chats opening together, or two self-tests) race: the loser's tmux says "server exited
+  unexpectedly" and does nothing. That could fail a self-test and switch the shell tools off in one chat; the
+  installer's test suite hit it. Such a call is now retried, three times at most; any other tmux error still fails
+  at once.
+
 ## 0.7.2 — 2026-11-14 — every argument described
 
 - **Every tool argument has a description**, with its default where it has one (23 of 46 had none: `command`,
