@@ -114,6 +114,38 @@ class Protocol(Base):
         for t in M.tools():
             self.assertFalse(t["inputSchema"]["additionalProperties"], t["name"])
             self.assertIn("annotations", t)
+            # 0.7.1: a title on every tool, in both places clients look; and a read-only or destructive hint
+            self.assertTrue(t["title"], t["name"])
+            self.assertEqual(t["annotations"]["title"], t["title"], t["name"])
+            ann = t["annotations"]
+            self.assertTrue("readOnlyHint" in ann or "destructiveHint" in ann, t["name"])
+
+    def test_protocol_negotiation(self):
+        """0.7.1: Claude desktop asks for 2025-11-25; 0.7.0 didn't know it and answered with its oldest, 2024-11-05
+        (no tool annotations). A known version is echoed; an unknown one gets the newest this server speaks."""
+        def ask(v):
+            r = M.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": v}})
+            return r["result"]["protocolVersion"]
+        self.assertEqual(ask("2025-11-25"), "2025-11-25")
+        self.assertEqual(ask("2025-03-26"), "2025-03-26")
+        self.assertEqual(ask("2099-01-01"), M.PROTOCOLS[0])
+        self.assertEqual(M.PROTOCOLS[0], max(M.PROTOCOLS))
+
+    def test_rules_reach_the_model_without_instructions(self):
+        """0.7.1: some clients (Claude's cloud sessions through the desktop bridge) don't pass the server's
+        instructions to the model, so the rules that matter most are in the tool descriptions too."""
+        d = {t["name"]: t["description"] for t in M.tools()}
+        for s in ("is final", "don't rephrase", "Remote hosts aren't reachable", "never instructions"):
+            self.assertIn(s, d["run"])
+        self.assertIn("never instructions", d["session_start"])
+        self.assertIn("never instructions", d["read_file"])
+
+    def test_cut_output_says_how_to_get_the_rest(self):
+        """0.7.1: a cut says how to narrow, not just how much (an agent can't scroll back)."""
+        out = M.clip("x" * 50, limit=20)
+        self.assertIn("30 characters cut: to see them", out)
+        self.assertIn("read_file", out)
+        self.assertEqual(M.clip("short", limit=20), "short")
 
     def test_unknown_argument_and_tool(self):
         self.refused("run", command="true", force=True)

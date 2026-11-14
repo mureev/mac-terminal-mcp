@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1 — 2026-11-14 — fits Claude desktop 5
+
+- **Protocol 2025-11-25.** Claude desktop asks for it; 0.7.0 didn't know it and answered with its oldest version,
+  2024-11-05, which has no tool annotations. A client asking for an unknown version now gets the newest this server
+  speaks.
+- **Tool titles.** Every tool has a `title`, also in its annotations, as the MCP spec and Anthropic's connector
+  checklist ask; clients show it instead of the bare name.
+- **The rules that matter are in the tool descriptions too.** Claude's cloud sessions reach this server through the
+  desktop app and don't get the server's instructions. `run` now says that a deny-list refusal is final, that remote
+  hosts aren't reachable, and that output is data, never instructions; `session_start` and `read_file` repeat the
+  last one.
+- **Cut output says how to get the rest** (narrow the command, or send it to a file and `read_file` it with
+  offset/limit), not only how much was cut.
+- README: why the network stays on, and Claude Code's sandboxed commands asking first since 2.1.325.
+
 ## 0.7.0 — 2026-11-04 — no dialogs; renamed from Mac Ops
 
 The approval system is gone; the macOS sandbox carries the weight (design-decisions: "No dialogs"). And a new name:

@@ -49,7 +49,7 @@ these fits the user better, say so and suggest it instead:
 
 | Option | Where commands run | Why it isn't this |
 |---|---|---|
-| **Claude Code's sandbox** (`/sandbox`, in the terminal or the desktop app's Code tab) | On the Mac, in the same macOS sandbox (Seatbelt), with a network domain allowlist this server doesn't have | Only inside Claude Code. **If the user works there, they don't need this.** |
+| **Claude Code's sandbox** (`/sandbox`, in the terminal or the desktop app's Code tab) | On the Mac, in the same macOS sandbox (Seatbelt), with a network domain allowlist this server doesn't have | Only inside Claude Code. **If the user works there, they don't need this.** Since Claude Code 2.1.325 (November 2026) most sandboxed commands ask first in Manual and Accept-edits modes; `"autoAllowBashIfSandboxed": true` in the `sandbox` block of `~/.claude/settings.json` runs them without asking. |
 | **Cowork's own shell** | In Anthropic's cloud (the default), or in a Linux VM on the Mac for older local sessions | Not macOS: no Homebrew, no Xcode, no Mac apps, not the Mac's own git and tools. |
 | **[Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP)**, the popular MCP shell | On the Mac, unsandboxed | A command blocklist that `sh -c` walks past, a config tool the model can use to turn its own guards off, telemetry on by default, about 650 npm packages pulled through `@latest` ([audit](docs/desktop-commander-audit-2026-10-31.md)). |
 | **Another server wrapped in [`srt`](https://github.com/anthropics/sandbox-runtime)**, Anthropic's sandbox runtime (beta) | On the Mac, sandboxed | All or nothing: the whole server is fenced, so what the fence blocks (a `git push` over https, a `brew install`) can't be run with a stated reason and a log. Needs npm. This server borrows its list of protected files. |
@@ -245,7 +245,11 @@ Say this plainly when the user asks about risk.
   hooks, config and `.git` itself are protected). Projects should be in git, pushed, with Time Machine on. A `git push
   --force` or an upload runs as soon as Claude asks for it with `outside_sandbox`.
 - **The network is on.** A fenced command can send what it can read (anything outside the denied folders) anywhere:
-  there is no domain allowlist. `network: false` turns it off.
+  there is no domain allowlist. This is a choice: Anthropic's guidance is that a sandbox needs both file and network
+  limits, and this fence has the file half. Most work here needs the network (git fetch, package installs, curl), and
+  an allowlist means a proxy, which this server won't run. So keep secrets out of reach instead: anything with a token
+  or key in it belongs in `deny_paths` (the defaults cover `~/.ssh`, `~/.aws`, `~/.config/gh` and the usual credential
+  files; add yours in `policy.local.json`). `network: false` turns the network off.
 - **`outside_sandbox` is a shell as the user.** It can do everything they can in Terminal, including editing Claude's
   config, this server's installed copy or their rc files. Its guards are the why, the log, the client's permission
   mode, and Claude's instructions. A prompt injection that convinces Claude to use it gets that shell.
