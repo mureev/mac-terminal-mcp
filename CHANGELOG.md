@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2 — 2026-11-14 — every argument described
+
+- **Every tool argument has a description**, with its default where it has one (23 of 46 had none: `command`,
+  `path`, `content`, `old_string`, `text`, `key`, `mode`, `target`...). `notify` states its length limits.
+- **Fuller descriptions for the shortest tools**: `session_read`, `session_list`, `session_stop` and `notify` now say
+  what they return, what they change and when to use something else (C-c to interrupt rather than stop a session).
+- No change to the fence, the policy or what any tool does.
+
 ## 0.7.1 — 2026-11-14 — fits Claude desktop 5
 
 - **Protocol 2025-11-25.** Claude desktop asks for it; 0.7.0 didn't know it and answered with its oldest version,

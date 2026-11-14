@@ -120,6 +120,14 @@ class Protocol(Base):
             ann = t["annotations"]
             self.assertTrue("readOnlyHint" in ann or "destructiveHint" in ann, t["name"])
 
+    def test_every_argument_and_tool_is_described(self):
+        """0.7.2: every argument says what it is and its default, and no tool is a one-liner (agents and Glama's
+        tool definition score read these; the weakest tool counts most)."""
+        for t in M.tools():
+            for k, v in t["inputSchema"]["properties"].items():
+                self.assertTrue(v.get("description"), f"{t['name']}.{k}")
+            self.assertGreaterEqual(len(t["description"]), 90, t["name"])
+
     def test_protocol_negotiation(self):
         """0.7.1: Claude desktop asks for 2025-11-25; 0.7.0 didn't know it and answered with its oldest, 2024-11-05
         (no tool annotations). A known version is echoed; an unknown one gets the newest this server speaks."""
