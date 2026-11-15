@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **install.sh says why it stops when it can't ask.** With Claude open and no terminal on stdin (run from a script
+  or another app), the "Quit Claude now?" prompt had nothing to read and the installer ended without a word. It now
+  stops with "there's no terminal to ask in" and what to do.
+
 ## 0.7.3 — 2026-11-14 — two servers starting at once
 
 - **Retry when another client won the tmux server start.** With no tmux server running, two calls that start one at

@@ -79,6 +79,7 @@ claude_running() { [ -z "${SKIP_APP_CONTROL:-}" ] && pgrep -x Claude >/dev/null 
 quit_claude() {
   claude_running || return 0
   say "Claude is open. It has to be closed while its config is edited."
+  [ -t 0 ] || die "Claude is open and there's no terminal to ask in. Quit Claude (Cmd+Q) and run this again from Terminal."
   read -r -p "  Quit Claude now? It reopens at the end. [Y/n] " a
   [[ "$a" =~ ^[Nn]$ ]] && die "Quit Claude (Cmd+Q) and run this again."
   osascript -e 'quit app "Claude"' >/dev/null 2>&1 || true
