@@ -9,6 +9,8 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B%20%C2%B7%20stdlib%20only-3776AB?logo=python&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-238636)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/mureev/mac-terminal-mcp)
+[![mureev/mac-terminal-mcp MCP server](https://glama.ai/mcp/servers/mureev/mac-terminal-mcp/badges/score.svg)](https://glama.ai/mcp/servers/mureev/mac-terminal-mcp)
 
 <p><img src="docs/demo.gif" width="760" alt="A recreation of a real session in Claude chat on a Mac (Opus 5.5), with its prompt, status and reply. Asked to fix the failing tests in a small project and then try adding a comment line to ~/.zshrc, Claude uses mac-terminal: the tests are fixed, and the macOS sandbox refuses the ~/.zshrc write with operation not permitted, because shell startup files run later, outside the sandbox. Claude's working time is shown at 5x speed."></p>
 
