@@ -145,7 +145,12 @@ If you have these tools (in Cowork and Claude desktop they show up as the `mac-t
 | `run` | One shell command (zsh login shell, as the user, no stdin, up to 45 s), in the fence. Output and exit code. `outside_sandbox=true` + `why`: no sandbox. |
 | `session_start` | A tmux session, in the fence (or `outside_sandbox`). With `command`, a job: it runs once, prints `[mac-terminal: exit N]`, and leaves a shell open. Without, an interactive shell. |
 | `session_send` | Type into a session (and/or press `C-c`, `Enter`, ...), then wait for output (`wait_s`, `until` regex). It runs in the sandbox the session started with; into an unsandboxed session, every call needs `outside_sandbox=true` and its own `why`. |
-| `session_read`, `session_list`, `session_stop` | Read the last lines (optionally wait for new ones), list sessions (each marked fenced or unsandboxed), kill one. |
+| `session_read`, `session_list`, `session_stop` | Read the last lines or page through recorded output, list sessions (each marked fenced or unsandboxed), kill one. |
+
+To follow a bursty job, start it with `record_output=true`, then call `session_read` with `cursor="start"` and pass
+each `Next cursor` back on the next call. Each page starts from that cursor. `wait_s` can wait for output or a regex
+within the next page. Terminal controls may appear as escapes. Recording is opt-in because it stores terminal
+output locally, including anything the job prints, up to 16 MiB while the pane is open.
 | `read_file`, `write_file` | Text files; `read_file` also .docx/.xlsx/.pptx (stdlib, no DTDs, size limits) and .pdf (macOS PDFKit, built once, run in the fence, offline). `write_file` creates (default; refuses an existing file), overwrites atomically, or appends; it refuses the files the fence protects. |
 | `edit_file` | Replace an exact `old_string` (unique unless `replace_all`) with `new_string`, atomically, keeping permissions and Windows line ends. If it isn't there, says where the closest text is and how it differs (`{-sent-}{+file+}`), and changes nothing. Refuses what `write_file` refuses; won't write over a change made since it read the file. |
 | `open`, `notify` | `open` a file, folder, http(s) URL or app (it runs outside the sandbox: logged); show a notification. |
@@ -203,9 +208,10 @@ machines, and changing production, belongs in a separate tool with its own gates
 repository of approved playbooks) are never writable here.
 
 **The audit log**, `~/.local/state/mac-terminal/audit.jsonl` (0600). Every call is logged before it runs (tool,
-arguments with secret-looking values masked, `write_file` content as length and hash) and again when it ends (ok,
-refused or error, duration, and how it ran: `fenced`, `unsandboxed` with its why, or `python` for the file tools). The
-self-test is logged too. If the log can't be written, nothing runs.
+arguments with secret-looking values masked, `write_file` content as length and hash, and the MCP client name) and
+again when it ends (tool result, duration, client, and how it ran). `run` also logs its shell exit code and timeout
+flag. `status` shows recent counts by client. Older records appear under `unknown client`. The self-test is logged
+too. If the log can't be written, nothing runs.
 
 **The deny lists** in `policy.json`: `sudo`/`su`, `ssh`/`scp`/`sftp`/`ansible`, Keychain password reads, and the
 secret folders. A **speed bump**: it stops honest mistakes and obvious injections, in and out of the fence. The fence

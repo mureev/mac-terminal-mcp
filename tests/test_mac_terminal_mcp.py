@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import shutil
 import subprocess
@@ -18,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -255,6 +257,23 @@ class Run(Base):
 
 
 class Audit(Base):
+    def test_client_and_shell_outcomes(self):
+        with patch.dict(M.CLIENT), patch.object(M, "_session_names", return_value=[]):
+            M.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"clientInfo": {"name": "Test Client"}}})
+            for code, timed_out in ((3, False), (None, True), (0, False)):
+                with patch.object(M, "via_tmux", return_value=(code, "", "", timed_out)):
+                    self.ok("run", command="true")
+            self.ok("write_file", path=os.path.join(self.home, "f.txt"), content="body")
+            self.assertIn("Test Client: 4 | 1 | 1", self.ok("status"))
+
+        failed, timeout, success, write, _ = self.audit_ends()
+        self.assertEqual(failed["client"], "Test Client")
+        self.assertEqual((failed["exit_code"], failed["timed_out"]), (3, False))
+        self.assertEqual((timeout["exit_code"], timeout["timed_out"]), (None, True))
+        self.assertEqual((success["exit_code"], success["timed_out"]), (0, False))
+        self.assertNotIn("exit_code", write)
+
     def test_every_call_is_logged_and_secrets_are_not(self):
         self.ok("run", command="export TOKEN=abc123supersecret; echo password=hunter2 >/dev/null")
         self.refused("run", command="sudo true")
@@ -482,6 +501,33 @@ class Office(Base):
 
 @unittest.skipUnless(HAVE_TMUX, "needs tmux")
 class Sessions(Base):
+    def test_recorded_output_pages_and_stale_cursor(self):
+        self.set_policy(output_max_chars=1024)
+        self.ok("session_start", name="recorded", record_output=True, wait_s=5,
+                command="printf 'FIRST\\n%01016d\\303\\251%03080d\\nLAST\\n' 0 0; exit 3")
+        cursor = "start"
+        pages = []
+        for _ in range(8):
+            reply = self.ok("session_read", name="recorded", cursor=cursor, wait_s=1)
+            match = re.search(r"^Next cursor: (\S+)(.*)\n", reply, re.M)
+            self.assertIsNotNone(match, reply)
+            cursor = match[1]
+            pages.append(reply[match.end():])
+            if "[mac-terminal: exit 3]" in "".join(pages):
+                break
+        transcript = "".join(pages)
+        self.assertIn("FIRST\n" + "0" * 1016 + "é" + "0" * 3080 + "\nLAST\n", transcript)
+        self.assertIn("[mac-terminal: exit 3]", transcript)
+        self.assertEqual(transcript.count("FIRST"), 1)
+        self.ok("session_stop", name="recorded")
+        self.ok("session_start", name="recorded", record_output=True, wait_s=0)
+        self.refused("session_read", name="recorded", cursor=cursor)
+
+    def test_cursor_only_valid_for_recorded_sessions(self):
+        self.ok("session_start", name="tail", command="echo plain-tail")
+        self.assertIn("plain-tail", self.ok("session_read", name="tail"))
+        self.refused("session_read", name="tail", cursor="start")
+
     def test_job_session(self):
         t = self.ok("session_start", name="job1", command="echo one; sleep 1; echo two; exit 3", wait_s=15)
         self.assertIn("two", t)

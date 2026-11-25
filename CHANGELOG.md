@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-25 — terminal output cursors and audit outcomes
+
+- **Read new terminal output in order.** Start a tmux session with `record_output=true`, then use `session_read`
+  with `cursor="start"` and the returned cursor to page through its output. Each recording is limited to 16 MiB
+  while the pane is open. Reading the tail still works for any session.
+- **See which client ran a command and what happened.** Audit records now include the MCP client name. `run`
+  separately records the command's exit code and timeout flag. `status` summarizes those outcomes by client.
 
 - **install.sh says why it stops when it can't ask.** With Claude open and no terminal on stdin (run from a script
   or another app), the "Quit Claude now?" prompt had nothing to read and the installer ended without a word. It now
